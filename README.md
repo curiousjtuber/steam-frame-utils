@@ -120,5 +120,13 @@ zsh itself is a distrobox export. The file therefore checks where it is running,
 A distrobox sees neither `/home/.tailscale` nor the daemon's socket in the host's `/run`, so the
 CLI has to run on the host.
 
+`waypipe` is a function around the real binary (in a box, or the `dbx-export` wrapper on the
+host). Game Mode is an X11 session: gamescope names its Wayland socket only in
+`GAMESCOPE_WAYLAND_DISPLAY` (`gamescope-0`), so a `waypipe` client started from a terminal there
+fails with `WAYLAND_DISPLAY is not set`. When `WAYLAND_DISPLAY` is empty, the function fills it in
+from `GAMESCOPE_WAYLAND_DISPLAY` for that one command. With that, `waypipe ssh <host> <app>` from a
+Game Mode Konsole shows a remote app on the Frame. The shell itself doesn't export it, because Qt
+and GTK apps started from that terminal would then leave Xwayland for native Wayland.
+
 The containers read the same `~/.bashrc`, so any other host-only line added there runs inside
 every distrobox too. Put such checks in `shell-init.sh` instead.
