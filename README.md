@@ -9,6 +9,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `shell-init.sh` | shell init that tells the bare host from its distroboxes (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
+| `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 
 ## Tailscale
 
@@ -154,3 +155,20 @@ in `PATH`:
 ```bash
 install -D -m 0755 ~/steam-frame-utils/bin/podman ~/.local/bin/podman
 ```
+
+## Mouse cursor in Desktop Mode
+
+In Desktop Mode the mouse moves but its cursor isn't drawn. KWin puts the cursor on a hardware
+plane, which the headset's view doesn't show. `KWIN_FORCE_SW_CURSOR=1` makes KWin draw it into the
+frame itself. The fix comes from Cas and Chary XR's
+[Steam Frame: 10 Things To Do FIRST](https://www.youtube.com/watch?v=jtW2mQd5qYI), credited
+there to ThrillSeeker.
+
+systemd reads `~/.config/environment.d` at login, so copy the file there and reboot:
+
+```bash
+install -D -m 0644 ~/steam-frame-utils/environment.d/90-kwin-software-cursor.conf ~/.config/environment.d/90-kwin-software-cursor.conf
+```
+
+`env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
+`~/.config/environment.d/90-kwin-software-cursor.conf` and reboot.
