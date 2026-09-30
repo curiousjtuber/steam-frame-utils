@@ -8,6 +8,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 |---|---|
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `shell-init.sh` | shell init that tells the bare host from its distroboxes (see [Shell init](#shell-init)) |
+| `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 
 ## Tailscale
 
@@ -130,3 +131,26 @@ and GTK apps started from that terminal would then leave Xwayland for native Way
 
 The containers read the same `~/.bashrc`, so any other host-only line added there runs inside
 every distrobox too. Put such checks in `shell-init.sh` instead.
+
+## Distrobox in Desktop Mode
+
+Desktop Mode on the Frame is Plasma nested inside gamescope, with its own session environment:
+
+- `XDG_RUNTIME_DIR=/run/user/1000/nested_plasma` rather than `/run/user/1000`
+- `DBUS_SESSION_BUS_ADDRESS` is a private bus under `/tmp` with no `systemd --user` behind it
+
+Rootless podman breaks on both. crun asks `org.freedesktop.systemd1` on the session bus for the
+container's cgroup, so `distrobox enter` fails with
+`crun: sd-bus call: Process org.freedesktop.systemd1 exited with status 1`. And podman keeps its
+runtime state under `$XDG_RUNTIME_DIR`, so a container started from SSH or Game Mode looks
+unset-up from Desktop Mode: `unable to find user steamos: no matching entries in passwd file`.
+
+`bin/podman` switches podman alone to the real runtime dir and user bus when it runs under
+`nested_plasma`, and passes through untouched everywhere else. distrobox still forwards the Desktop
+Mode environment into the container, so GUI apps there reach the nested Plasma's
+`wayland-0`, X display and session bus. Copy it to `~/.local/bin`, which comes before `/usr/bin`
+in `PATH`:
+
+```bash
+install -D -m 0755 ~/steam-frame-utils/bin/podman ~/.local/bin/podman
+```
