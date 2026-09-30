@@ -9,6 +9,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `setup.sh` | checks and installs everything below (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
+| `apps/` | installers for apps: Stream Frame and BSManager (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for the `tailscale` alias and `waypipe` (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
@@ -176,6 +177,24 @@ The root filesystem is read-only, but fonts don't need it. fontconfig also reads
 
 To uninstall a font, delete its folder and run `fc-cache -f`. The script's header comment has the
 steps.
+
+## Apps
+
+`apps/` holds one installer per app. `setup.sh` doesn't run them; each is run by hand, and a
+re-run updates. The header comment of each has the details and the uninstall steps.
+
+| Script | App | Where it goes |
+|---|---|---|
+| `install-stream-frame.sh [--yes]` | [Stream Frame](https://streamframe.app), for watching, recording and screenshotting the headset from another device | Flatpak `com.boxtree.StreamFrame`, system-wide, from Boxtree's repo; uses sudo |
+| `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
+
+- **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
+  distrobox. The first install also pulls the KDE runtime from Flathub, a few hundred MB, and
+  asks first unless given `--yes`. `/var/lib/flatpak` is a bind mount into `/home/.steamos/offload`,
+  so SteamOS updates keep it. It needs ffmpeg on the headset, and SteamOS already has it in
+  `/usr/bin`.
+- **BSManager** runs the fork's own `install.sh` from its latest release, passing on
+  `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
 
 ## Shell init
 
