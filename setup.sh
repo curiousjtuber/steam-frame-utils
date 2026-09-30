@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
-# Set up a Steam Frame's user environment from this repo. Run it on the Frame's bare host, as the
-# steamos user; re-running it only changes what is missing or out of date.
+# Set up a Steam Frame's user environment from this repo, as the steamos user. Re-running it only
+# changes what is missing or out of date.
 #
-# Usage:  ./setup.sh [--check] [--tailscale[=trust]]
+# Usage:  ./setup.sh [--check] [--yes] [--ubuntu] [--zsh] [--waypipe] [--tailscale[=trust]]
+#
+# With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman and the
+# Desktop Mode cursor fix.
 #
 # --check           report what would change, and change nothing
+# --yes             create the ubuntu box without asking first
+# --ubuntu          create the ubuntu distrobox if it doesn't exist. It asks first: the image is
+#                   about 1.2 GB, and the box's first start takes several minutes.
+# --zsh             zsh from the ubuntu box, exported as ~/.local/bin/zsh; implies --ubuntu
+# --waypipe         waypipe in the ubuntu box, a copy in ~/.local/bin for the host, and the Game
+#                   Mode waypipe function in ~/.bashrc and ~/.zshrc; implies --ubuntu
 # --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
 #                   of the tailscale alias in ~/.bashrc and ~/.zshrc; uses sudo.
 #                   --tailscale=trust also puts tailscale0 in firewalld's trusted zone.
 #                   Without it, what's missing is only reported.
+#
+# The host and its distroboxes share the home directory, so it also runs inside a distrobox,
+# except for what needs the host: --tailscale always, and --ubuntu, --zsh and --waypipe from any
+# box but ubuntu itself.
 #
 # Files are copied, not linked, so the Frame keeps working if this checkout moves or is deleted.
 # A file that differs is backed up to <file>.bak-<timestamp> before it is replaced. Text inserted
@@ -19,12 +32,20 @@ set -euo pipefail
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STAMP=$(date +%Y%m%d-%H%M%S)
+BOX=ubuntu
+IMAGE=quay.io/toolbx/ubuntu-toolbox:26.04
+# Set when the host re-runs this script inside the ubuntu box for the box's own part.
+IN_BOX_RUN=${SFU_IN_BOX:-}
 
-check=0
+check=0 yes=0 want_ubuntu=0 want_zsh=0 want_waypipe=0
 tailscale=
 for arg in "$@"; do
   case $arg in
     --check) check=1 ;;
+    --yes) yes=1 ;;
+    --ubuntu) want_ubuntu=1 ;;
+    --zsh) want_zsh=1 want_ubuntu=1 ;;
+    --waypipe) want_waypipe=1 want_ubuntu=1 ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
     -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
@@ -37,6 +58,7 @@ reboot_needed=0
 
 say()  { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
 act()  { changed=1; if (( check )); then say "would $2" "$1"; else say "$2" "$1"; fi; }
+die()  { echo "setup.sh: $*" >&2; exit 1; }
 
 # append FILE -- stdin goes after the file's last line, even one without a trailing newline
 append() {
@@ -67,17 +89,6 @@ copy_file() {
   (( check )) || install -D -m "$mode" "$src" "$dst"
 }
 
-# ensure_line FILE LINE -- appends LINE unless the file already has it verbatim
-ensure_line() {
-  local file=$1 line=$2
-  if [[ -f $file ]] && grep -qxF -- "$line" "$file"; then
-    say "ok" "$file: $line"
-    return
-  fi
-  act "$file: $line" "add"
-  (( check )) || printf '%s\n' "$line" | append "$file"
-}
-
 # ensure_block FILE NAME CONTENT_FILE -- the marked block NAME holds exactly CONTENT_FILE
 ensure_block() {
   local file=$1 name=$2 content=$3
@@ -102,31 +113,112 @@ ensure_block() {
   fi
 }
 
+# ensure_init FILE NAME PATTERN -- inserts shell-init/NAME.sh, unless FILE already defines it some
+# other way (PATTERN, an ERE, matches a line of that definition)
+ensure_init() {
+  local file=$1 name=$2 pattern=$3
+  if [[ -f $file ]] && ! grep -qxF "# >>> steam-frame-utils: $name >>>" "$file" \
+      && grep -qE "$pattern" "$file"; then
+    say "ok" "$file: $name, defined outside a steam-frame-utils block"
+  else
+    ensure_block "$file" "$name" "$SRC/shell-init/$name.sh"
+  fi
+}
+
 # --- Where we are -------------------------------------------------------------------------------
 
-if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
-  echo "setup.sh: run this on the Frame's host, not inside a distrobox" >&2
-  exit 1
+box=${CONTAINER_ID:-}
+if [[ -z $box && -e /run/.containerenv ]]; then
+  box=$(sed -n 's/^name="\(.*\)"$/\1/p' /run/.containerenv)
+  box=${box:-unknown}
 fi
+
 # The Frame's image is SteamOS with VARIANT_ID=vr, on arm64; a Steam Deck is SteamOS on x86_64.
-os=$(. /etc/os-release 2>/dev/null; echo "${ID:-?} ${VARIANT_ID:-?}")
+# Inside a distrobox, the host's os-release is under /run/host.
+osrel=/etc/os-release
+[[ -n $box ]] && osrel=/run/host/etc/os-release
+os=$(. "$osrel" 2>/dev/null; echo "${ID:-?} ${VARIANT_ID:-?}")
 if [[ $os != "steamos vr" || $(uname -m) != aarch64 ]]; then
   echo "setup.sh: this isn't a Steam Frame (os-release: $os, arch: $(uname -m));" \
     "set FORCE=1 to run anyway" >&2
   [[ ${FORCE:-} == 1 ]] || exit 1
 fi
 
+if [[ -n $box ]]; then
+  [[ -z $tailscale ]] || die "--tailscale needs the Frame's host; run it there, not in the $box box"
+  (( ! want_ubuntu )) || [[ $box == "$BOX" ]] \
+    || die "--ubuntu, --zsh and --waypipe need the host or the $BOX box, not the $box box"
+fi
+
+# bin/podman and distrobox's exports have to win even when the caller's PATH lacks ~/.local/bin,
+# as it can on a first run in Desktop Mode.
+export PATH=$HOME/.local/bin:$PATH
+
+# --- Inside the ubuntu box ----------------------------------------------------------------------
+# The box's own part of --zsh and --waypipe: apt packages, and the exports into the shared
+# ~/.local/bin. The host runs this through distrobox enter.
+
+apt_updated=0
+apt_ensure() {
+  if dpkg -s "$1" >/dev/null 2>&1; then
+    say "ok" "$1 in the $BOX box"
+    return
+  fi
+  act "$1 in the $BOX box" "apt install"
+  (( check )) && return
+  (( apt_updated )) || { sudo apt-get update -qq; apt_updated=1; }
+  sudo apt-get install -y "$1"
+}
+
+in_box_part() {
+  if (( want_zsh )); then
+    apt_ensure zsh
+    local zsh=$HOME/.local/bin/zsh
+    if [[ ! -e $zsh ]]; then
+      act "$zsh, exported from the $BOX box" "export"
+      (( check )) || distrobox-export --bin /usr/bin/zsh --export-path "$HOME/.local/bin" >/dev/null
+    elif grep -qF -- "-n $BOX " "$zsh"; then
+      say "ok" "$zsh, exported from the $BOX box"
+    else
+      say "skip" "$zsh exists and isn't the $BOX box's export; left alone"
+    fi
+  fi
+  if (( want_waypipe )); then
+    apt_ensure waypipe
+    # The host runs a plain copy of the box's binary; its libraries are all on SteamOS too.
+    if [[ -e /usr/bin/waypipe ]]; then
+      copy_file /usr/bin/waypipe "$HOME/.local/bin/waypipe" 0755 || true
+    else
+      act "$HOME/.local/bin/waypipe, from the $BOX box" "copy"
+    fi
+  fi
+}
+
+if [[ -n $IN_BOX_RUN ]]; then
+  in_box_part
+  # 100 tells the host's run that something changed.
+  (( changed )) && exit 100
+  exit 0
+fi
+
 # --- ~/.local/bin on PATH -------------------------------------------------------------------------
 # distrobox, its exports and bin/podman live there, and podman has to win over /usr/bin/podman.
+# Any line that already puts it on PATH counts, however it spells the home directory.
 
-PATH_LINE='export PATH=~/.local/bin:$PATH'
-ensure_line "$HOME/.bashrc" "$PATH_LINE"
-ensure_line "$HOME/.profile" "$PATH_LINE"
+for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+  if [[ -f $rc ]] && grep -qE "^[^#]*PATH=.*(~|\\\$HOME|\\\$\\{HOME\\}|$HOME)/\\.local/bin" "$rc"; then
+    say "ok" "$rc: ~/.local/bin on PATH"
+  else
+    act "$rc: export PATH=~/.local/bin:\$PATH" "add"
+    (( check )) || printf '%s\n' 'export PATH=~/.local/bin:$PATH' | append "$rc"
+  fi
+done
 
 # --- distrobox ----------------------------------------------------------------------------------
 
-if [[ -x $HOME/.local/bin/distrobox ]]; then
-  say "ok" "distrobox $("$HOME/.local/bin/distrobox" version 2>/dev/null | sed 's/.*: *//')"
+DISTROBOX=$HOME/.local/bin/distrobox
+if [[ -x $DISTROBOX ]]; then
+  say "ok" "distrobox $("$DISTROBOX" version 2>/dev/null | sed 's/.*: *//')"
 else
   act "distrobox into ~/.local" "install"
   (( check )) || curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install \
@@ -142,20 +234,78 @@ copy_file "$SRC/bin/podman" "$HOME/.local/bin/podman" 0755 || true
 conf=90-kwin-software-cursor.conf
 copy_file "$SRC/environment.d/$conf" "$HOME/.config/environment.d/$conf" 0644 && reboot_needed=1
 
+# --- The ubuntu box: --ubuntu, --zsh, --waypipe -------------------------------------------------
+
+confirm_box() {
+  (( yes )) && return 0
+  local free; free=$(df -h --output=avail "$HOME" | tail -1 | tr -d ' ')
+  echo "Creating the $BOX box pulls $IMAGE, about 1.2 GB, into" \
+    "~/.local/share/containers ($free free). Its first start then takes several minutes." >&2
+  if ! (: </dev/tty) 2>/dev/null; then
+    echo "setup.sh: no terminal to ask on; re-run with --yes to create the box" >&2
+    return 1
+  fi
+  local answer
+  read -r -p "Continue? [y/N] " answer </dev/tty || return 1
+  [[ $answer == [yY]* ]]
+}
+
+if (( want_ubuntu )); then
+  have_box=0
+  if [[ $box == "$BOX" ]] || podman container exists "$BOX" 2>/dev/null; then
+    say "ok" "$BOX distrobox"
+    have_box=1
+  elif (( check )); then
+    act "$BOX distrobox from $IMAGE (about 1.2 GB)" "create"
+  elif confirm_box; then
+    act "$BOX distrobox from $IMAGE" "create"
+    "$DISTROBOX" create --yes --name "$BOX" --image "$IMAGE"
+    have_box=1
+  else
+    say "skip" "$BOX distrobox: not created"
+  fi
+
+  if (( want_zsh || want_waypipe )); then
+    if [[ $box == "$BOX" ]]; then
+      in_box_part
+    elif (( have_box )); then
+      args=()
+      (( check )) && args+=(--check)
+      (( want_zsh )) && args+=(--zsh)
+      (( want_waypipe )) && args+=(--waypipe)
+      rc=0
+      "$DISTROBOX" enter "$BOX" -- env SFU_IN_BOX=1 FORCE="${FORCE:-}" \
+        bash "$SRC/setup.sh" "${args[@]}" || rc=$?
+      case $rc in
+        0) ;;
+        100) changed=1 ;;
+        *) die "the part inside the $BOX box failed (exit $rc)" ;;
+      esac
+    else
+      say "skip" "--zsh/--waypipe inside the $BOX box: it doesn't exist yet"
+    fi
+  fi
+fi
+
 # --- Shell init ---------------------------------------------------------------------------------
 
 # The containers share these rc files, so each block works on the host and in a distrobox alike.
-# zsh only exists inside a distrobox, so ~/.zshrc is optional.
+# zsh only exists inside a distrobox, so ~/.zshrc is optional; --zsh creates it so that zsh
+# doesn't start with its new-user menu.
+if (( want_zsh )) && [[ ! -e $HOME/.zshrc ]]; then
+  act "$HOME/.zshrc" "create"
+  (( check )) || : > "$HOME/.zshrc"
+fi
 rcs=("$HOME/.bashrc")
-if [[ -f $HOME/.zshrc ]]; then
+if [[ -f $HOME/.zshrc ]] || (( want_zsh )); then
   rcs+=("$HOME/.zshrc")
-else
-  say "skip" "$HOME/.zshrc doesn't exist"
 fi
 
-for rc in "${rcs[@]}"; do
-  ensure_block "$rc" waypipe "$SRC/shell-init/waypipe.sh"
-done
+if (( want_waypipe )); then
+  for rc in "${rcs[@]}"; do
+    ensure_init "$rc" waypipe '^[[:space:]]*(function[[:space:]]+waypipe|waypipe[[:space:]]*\(\))'
+  done
+fi
 
 # --- Tailscale ----------------------------------------------------------------------------------
 
@@ -164,69 +314,68 @@ done
 # re-runs it, and it then enables, starts and trusts in one go.
 TS=/home/.tailscale/bin
 KEEP=/etc/atomic-update.conf.d/tailscale-firewall.conf
-ts_missing=()
-[[ -x $TS/tailscale && -x $TS/tailscaled ]] || ts_missing+=(binaries)
-[[ -f /etc/systemd/system/tailscaled.service ]] || ts_missing+=(unit)
-systemctl is-enabled --quiet tailscaled 2>/dev/null || ts_missing+=(enabled)
-systemctl is-active --quiet tailscaled 2>/dev/null || ts_missing+=(running)
-if [[ $tailscale == trust ]]; then
-  [[ $(firewall-cmd --get-zone-of-interface=tailscale0 2>/dev/null) == trusted && -f $KEEP ]] \
-    || ts_missing+=(trusted)
-fi
-ts_needs() { [[ " ${ts_missing[*]} " == *" $1 "* ]]; }
 
-if (( ${#ts_missing[@]} == 0 )); then
-  say "ok" "tailscaled"
-elif [[ -z $tailscale ]]; then
-  say "missing" "tailscaled: ${ts_missing[*]} (re-run with --tailscale, or see README.md#tailscale)"
-elif ts_needs binaries || ts_needs unit; then
-  act "tailscaled: ${ts_missing[*]}, via install-tailscale.sh" "install"
-  if (( ! check )); then
-    args=()
-    [[ $tailscale == trust ]] && args+=(--trust-tailnet)
-    sudo bash "$SRC/install-tailscale.sh" "${args[@]}"
-  fi
+if [[ -n $box ]]; then
+  say "skip" "tailscaled: the $box box can't see it; check from the host"
 else
-  if ts_needs enabled; then
-    act "tailscaled" "enable"
-    (( check )) || sudo systemctl enable tailscaled
+  ts_missing=()
+  [[ -x $TS/tailscale && -x $TS/tailscaled ]] || ts_missing+=(binaries)
+  [[ -f /etc/systemd/system/tailscaled.service ]] || ts_missing+=(unit)
+  systemctl is-enabled --quiet tailscaled 2>/dev/null || ts_missing+=(enabled)
+  systemctl is-active --quiet tailscaled 2>/dev/null || ts_missing+=(running)
+  if [[ $tailscale == trust ]]; then
+    [[ $(firewall-cmd --get-zone-of-interface=tailscale0 2>/dev/null) == trusted && -f $KEEP ]] \
+      || ts_missing+=(trusted)
   fi
-  if ts_needs running; then
-    act "tailscaled" "start"
-    (( check )) || sudo systemctl start tailscaled
-  fi
-  if ts_needs trusted; then
-    # The same steps install-tailscale.sh --trust-tailnet takes, without reinstalling.
-    act "tailscale0 in firewalld's trusted zone, kept across updates" "trust"
+  ts_needs() { [[ " ${ts_missing[*]} " == *" $1 "* ]]; }
+
+  if (( ${#ts_missing[@]} == 0 )); then
+    say "ok" "tailscaled"
+  elif [[ -z $tailscale ]]; then
+    say "missing" "tailscaled: ${ts_missing[*]} (re-run with --tailscale, or see README.md#tailscale)"
+  elif ts_needs binaries || ts_needs unit; then
+    act "tailscaled: ${ts_missing[*]}, via install-tailscale.sh" "install"
     if (( ! check )); then
-      sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
-      sudo firewall-cmd --reload
-      sudo install -d -m 755 "${KEEP%/*}"
-      echo /etc/firewalld/zones/trusted.xml | sudo tee "$KEEP" >/dev/null
+      args=()
+      [[ $tailscale == trust ]] && args+=(--trust-tailnet)
+      sudo bash "$SRC/install-tailscale.sh" "${args[@]}"
     fi
-  fi
-fi
-
-# Logging in is interactive, so it is only reported.
-if [[ -x $TS/tailscale ]] && systemctl is-active --quiet tailscaled 2>/dev/null; then
-  backend=$("$TS/tailscale" status --json 2>/dev/null | jq -r .BackendState 2>/dev/null || true)
-  if [[ $backend == Running ]]; then
-    say "ok" "tailscale login"
   else
-    say "missing" "tailscale login (${backend:-unknown}): sudo $TS/tailscale up --qr --operator=$USER --ssh"
-  fi
-fi
-
-# An rc file that already defines the alias some other way is left alone.
-if [[ -n $tailscale ]]; then
-  for rc in "${rcs[@]}"; do
-    if ! grep -qxF '# >>> steam-frame-utils: tailscale >>>' "$rc" \
-        && grep -qE '^[[:space:]]*alias tailscale=' "$rc"; then
-      say "ok" "$rc: tailscale alias, defined outside a steam-frame-utils block"
-    else
-      ensure_block "$rc" tailscale "$SRC/shell-init/tailscale.sh"
+    if ts_needs enabled; then
+      act "tailscaled" "enable"
+      (( check )) || sudo systemctl enable tailscaled
     fi
-  done
+    if ts_needs running; then
+      act "tailscaled" "start"
+      (( check )) || sudo systemctl start tailscaled
+    fi
+    if ts_needs trusted; then
+      # The same steps install-tailscale.sh --trust-tailnet takes, without reinstalling.
+      act "tailscale0 in firewalld's trusted zone, kept across updates" "trust"
+      if (( ! check )); then
+        sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
+        sudo firewall-cmd --reload
+        sudo install -d -m 755 "${KEEP%/*}"
+        echo /etc/firewalld/zones/trusted.xml | sudo tee "$KEEP" >/dev/null
+      fi
+    fi
+  fi
+
+  # Logging in is interactive, so it is only reported.
+  if [[ -x $TS/tailscale ]] && systemctl is-active --quiet tailscaled 2>/dev/null; then
+    backend=$("$TS/tailscale" status --json 2>/dev/null | jq -r .BackendState 2>/dev/null || true)
+    if [[ $backend == Running ]]; then
+      say "ok" "tailscale login"
+    else
+      say "missing" "tailscale login (${backend:-unknown}): sudo $TS/tailscale up --qr --operator=$USER --ssh"
+    fi
+  fi
+
+  if [[ -n $tailscale ]]; then
+    for rc in "${rcs[@]}"; do
+      ensure_init "$rc" tailscale '^[[:space:]]*alias tailscale='
+    done
+  fi
 fi
 
 # --- Done ---------------------------------------------------------------------------------------

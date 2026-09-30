@@ -14,32 +14,47 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 
 ## Setup
 
-On the Frame's host, not in a distrobox:
-
 ```bash
 ~/steam-frame-utils/setup.sh --check
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh
+~/steam-frame-utils/setup.sh [--zsh] [--waypipe] [--tailscale[=trust]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
 out of date, so after pulling this repo, run it again.
 
+With no options:
+
 | What | How |
 |---|---|
-| `~/.local/bin` first in `PATH` | adds `export PATH=~/.local/bin:$PATH` to `~/.bashrc` and `~/.profile` if it isn't there |
+| `~/.local/bin` first in `PATH` | adds `export PATH=~/.local/bin:$PATH` to `~/.bashrc` and `~/.profile`, unless a line there already puts `~/.local/bin` on `PATH` |
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
 | `bin/podman` | copies to `~/.local/bin/podman` |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
-| `shell-init/waypipe.sh` | inserts into `~/.bashrc`, and into `~/.zshrc` if it exists |
-| Tailscale | reports what's missing. `--tailscale` fixes only that, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. It inserts `shell-init/tailscale.sh` like `waypipe.sh`, unless the rc file already defines `alias tailscale=`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported |
+
+Options add the rest, and each one also fixes only what's missing:
+
+| Option | What |
+|---|---|
+| `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
+| `--zsh` | implies `--ubuntu`. zsh in the box, exported as `~/.local/bin/zsh`, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu. An existing `~/.local/bin/zsh` exported from another box is left alone |
+| `--waypipe` | implies `--ubuntu`. waypipe in the box, a copy of its binary in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [Shell init](#shell-init)) |
+| `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
+
+The rest of the box's setup, such as mise and tmux, is personal and not part of this.
+
+The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
+What needs the host is refused there: `--tailscale`, and `--ubuntu`, `--zsh` and `--waypipe` in
+any box but `ubuntu`. From the host, the box's part of `--zsh` and `--waypipe` runs through
+`distrobox enter ubuntu`.
 
 Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
 file that differs is moved to `<file>.bak-<timestamp>` first. Inserted text sits between
 `# >>> steam-frame-utils: <name> >>>` and `# <<< … <<<` markers, and a re-run replaces it in place;
-edit the source here, not the copy.
+edit the source here, not the copy. A shell-init file isn't inserted into an rc file that already
+defines the same alias or function some other way.
 
 ## Tailscale
 
@@ -136,8 +151,8 @@ The steps are in the script's header comment.
 ## Shell init
 
 `shell-init/` holds one file per feature, each inserted at the end of `~/.bashrc`, and of
-`~/.zshrc` if that exists, as its own marked block. `setup.sh` always inserts `waypipe.sh`;
-`tailscale.sh` goes in only with `--tailscale`.
+`~/.zshrc` if that exists, as its own marked block. `waypipe.sh` goes in with `--waypipe`, and
+`tailscale.sh` with `--tailscale`.
 
 The bare host and its distroboxes share one home directory, so the same blocks run in all of them;
 zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is running, using
@@ -151,14 +166,14 @@ zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is ru
 A distrobox sees neither `/home/.tailscale` nor the daemon's socket in the host's `/run`, so the
 CLI has to run on the host.
 
-`waypipe` is a function around the real binary: the `ubuntu` box's `/usr/bin/waypipe`, which is
-also copied to `~/.local/bin` so the host can run it without entering the box. Game Mode is an X11
-session: gamescope names its Wayland socket only in `GAMESCOPE_WAYLAND_DISPLAY` (`gamescope-0`), so
-a `waypipe` client started from a terminal there fails with `WAYLAND_DISPLAY is not set`. When
-`WAYLAND_DISPLAY` is empty, the function fills it in from `GAMESCOPE_WAYLAND_DISPLAY` for that one
-command. With that, `waypipe ssh <host> <app>` from a Game Mode Konsole shows a remote app on the
-Frame. The shell itself doesn't export it, because Qt and GTK apps started from that terminal would
-then leave Xwayland for native Wayland.
+`waypipe` is a function around the real binary: the `ubuntu` box's `/usr/bin/waypipe`, which
+`--waypipe` also copies to `~/.local/bin` so the host can run it without entering the box. Game
+Mode is an X11 session: gamescope names its Wayland socket only in `GAMESCOPE_WAYLAND_DISPLAY`
+(`gamescope-0`), so a `waypipe` client started from a terminal there fails with `WAYLAND_DISPLAY is
+not set`. When `WAYLAND_DISPLAY` is empty, the function fills it in from
+`GAMESCOPE_WAYLAND_DISPLAY` for that one command. With that, `waypipe ssh <host> <app>` from a Game
+Mode Konsole shows a remote app on the Frame. The shell itself doesn't export it, because Qt and
+GTK apps started from that terminal would then leave Xwayland for native Wayland.
 
 The containers read the same `~/.bashrc`, so any host-only line added there outside these blocks
 runs inside every distrobox too. Put such checks in a `shell-init/` file instead.
