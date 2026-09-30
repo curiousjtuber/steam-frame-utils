@@ -142,14 +142,19 @@ copy_file "$SRC/environment.d/$conf" "$HOME/.config/environment.d/$conf" 0644 &&
 
 # --- Shell init ---------------------------------------------------------------------------------
 
-# The block checks for itself whether it runs on the host or in a distrobox, so it can go into
-# rc files the containers share. zsh only exists inside a distrobox, so ~/.zshrc is optional.
-ensure_block "$HOME/.bashrc" shell-init "$SRC/shell-init.sh"
+# The containers share these rc files, so each block works on the host and in a distrobox alike.
+# zsh only exists inside a distrobox, so ~/.zshrc is optional.
+rcs=("$HOME/.bashrc")
 if [[ -f $HOME/.zshrc ]]; then
-  ensure_block "$HOME/.zshrc" shell-init "$SRC/shell-init.sh"
+  rcs+=("$HOME/.zshrc")
 else
   say "skip" "$HOME/.zshrc doesn't exist"
 fi
+
+for rc in "${rcs[@]}"; do
+  ensure_block "$rc" tailscale "$SRC/shell-init/tailscale.sh"
+  ensure_block "$rc" waypipe "$SRC/shell-init/waypipe.sh"
+done
 
 # --- Tailscale ----------------------------------------------------------------------------------
 

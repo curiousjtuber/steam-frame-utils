@@ -23,7 +23,7 @@
 #   # if --trust-tailnet was used:
 #   sudo firewall-cmd --permanent --zone=trusted --remove-interface=tailscale0 && sudo firewall-cmd --reload
 #   sudo rm /etc/atomic-update.conf.d/tailscale-firewall.conf
-#   # the `tailscale` alias itself comes from shell-init.sh
+#   # the `tailscale` alias itself comes from shell-init/tailscale.sh
 
 set -euo pipefail
 

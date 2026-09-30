@@ -8,7 +8,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 |---|---|
 | `setup.sh` | checks and installs everything below (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
-| `shell-init.sh` | shell init that tells the bare host from its distroboxes (see [Shell init](#shell-init)) |
+| `shell-init/` | bash and zsh init for the `tailscale` alias and `waypipe` (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 
@@ -33,7 +33,7 @@ out of date, so after pulling this repo, run it again.
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
 | `bin/podman` | copies to `~/.local/bin/podman` |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
-| `shell-init.sh` | inserts into `~/.bashrc`, and into `~/.zshrc` if it exists |
+| `shell-init/` | inserts `tailscale.sh` and `waypipe.sh` into `~/.bashrc`, and into `~/.zshrc` if it exists |
 | Tailscale | reports it only; `--tailscale` runs `install-tailscale.sh` with sudo if `tailscaled` isn't set up, and `--tailscale=trust` adds `--trust-tailnet` |
 
 Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
@@ -134,11 +134,11 @@ The steps are in the script's header comment.
 
 ## Shell init
 
-`shell-init.sh` is the Frame's host-specific init. `setup.sh` inserts it at the end of
-`~/.bashrc`, and of `~/.zshrc` if that exists.
+`shell-init/` holds one file per feature, each inserted at the end of `~/.bashrc`, and of
+`~/.zshrc` if that exists, as its own marked block. `setup.sh` inserts all of them.
 
-The bare host and its distroboxes share one home directory, so the same file runs in all of them;
-zsh itself is a distrobox export. The file therefore checks where it is running, using
+The bare host and its distroboxes share one home directory, so the same blocks run in all of them;
+zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is running, using
 `$CONTAINER_ID` or `/run/.containerenv`:
 
 | Where | `tailscale` alias |
@@ -158,8 +158,8 @@ command. With that, `waypipe ssh <host> <app>` from a Game Mode Konsole shows a 
 Frame. The shell itself doesn't export it, because Qt and GTK apps started from that terminal would
 then leave Xwayland for native Wayland.
 
-The containers read the same `~/.bashrc`, so any host-only line added there outside this block
-runs inside every distrobox too. Put such checks in `shell-init.sh` instead.
+The containers read the same `~/.bashrc`, so any host-only line added there outside these blocks
+runs inside every distrobox too. Put such checks in a `shell-init/` file instead.
 
 ## Distrobox in Desktop Mode
 
