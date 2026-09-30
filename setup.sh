@@ -5,8 +5,10 @@
 # Usage:  ./setup.sh [--check] [--tailscale[=trust]]
 #
 # --check           report what would change, and change nothing
-# --tailscale       also run install-tailscale.sh (with sudo) if tailscaled isn't installed;
-#                   --tailscale=trust passes --trust-tailnet
+# --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
+#                   of the tailscale alias in ~/.bashrc and ~/.zshrc; uses sudo.
+#                   --tailscale=trust also puts tailscale0 in firewalld's trusted zone.
+#                   Without it, what's missing is only reported.
 #
 # Files are copied, not linked, so the Frame keeps working if this checkout moves or is deleted.
 # A file that differs is backed up to <file>.bak-<timestamp> before it is replaced. Text inserted
@@ -152,24 +154,79 @@ else
 fi
 
 for rc in "${rcs[@]}"; do
-  ensure_block "$rc" tailscale "$SRC/shell-init/tailscale.sh"
   ensure_block "$rc" waypipe "$SRC/shell-init/waypipe.sh"
 done
 
 # --- Tailscale ----------------------------------------------------------------------------------
 
-if systemctl is-enabled --quiet tailscaled 2>/dev/null && [[ -x /home/.tailscale/bin/tailscale ]]; then
+# Each part is checked on its own, and --tailscale fixes only what is missing. Only the installer
+# can put back the binaries or the unit (a SteamOS update can drop the unit), so either of those
+# re-runs it, and it then enables, starts and trusts in one go.
+TS=/home/.tailscale/bin
+KEEP=/etc/atomic-update.conf.d/tailscale-firewall.conf
+ts_missing=()
+[[ -x $TS/tailscale && -x $TS/tailscaled ]] || ts_missing+=(binaries)
+[[ -f /etc/systemd/system/tailscaled.service ]] || ts_missing+=(unit)
+systemctl is-enabled --quiet tailscaled 2>/dev/null || ts_missing+=(enabled)
+systemctl is-active --quiet tailscaled 2>/dev/null || ts_missing+=(running)
+if [[ $tailscale == trust ]]; then
+  [[ $(firewall-cmd --get-zone-of-interface=tailscale0 2>/dev/null) == trusted && -f $KEEP ]] \
+    || ts_missing+=(trusted)
+fi
+ts_needs() { [[ " ${ts_missing[*]} " == *" $1 "* ]]; }
+
+if (( ${#ts_missing[@]} == 0 )); then
   say "ok" "tailscaled"
 elif [[ -z $tailscale ]]; then
-  say "missing" "tailscaled (re-run with --tailscale, or see README.md#tailscale)"
-else
-  act "tailscale via install-tailscale.sh" "install"
+  say "missing" "tailscaled: ${ts_missing[*]} (re-run with --tailscale, or see README.md#tailscale)"
+elif ts_needs binaries || ts_needs unit; then
+  act "tailscaled: ${ts_missing[*]}, via install-tailscale.sh" "install"
   if (( ! check )); then
     args=()
     [[ $tailscale == trust ]] && args+=(--trust-tailnet)
     sudo bash "$SRC/install-tailscale.sh" "${args[@]}"
-    echo "log in with: sudo /home/.tailscale/bin/tailscale up --qr --operator=$USER --ssh"
   fi
+else
+  if ts_needs enabled; then
+    act "tailscaled" "enable"
+    (( check )) || sudo systemctl enable tailscaled
+  fi
+  if ts_needs running; then
+    act "tailscaled" "start"
+    (( check )) || sudo systemctl start tailscaled
+  fi
+  if ts_needs trusted; then
+    # The same steps install-tailscale.sh --trust-tailnet takes, without reinstalling.
+    act "tailscale0 in firewalld's trusted zone, kept across updates" "trust"
+    if (( ! check )); then
+      sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
+      sudo firewall-cmd --reload
+      sudo install -d -m 755 "${KEEP%/*}"
+      echo /etc/firewalld/zones/trusted.xml | sudo tee "$KEEP" >/dev/null
+    fi
+  fi
+fi
+
+# Logging in is interactive, so it is only reported.
+if [[ -x $TS/tailscale ]] && systemctl is-active --quiet tailscaled 2>/dev/null; then
+  backend=$("$TS/tailscale" status --json 2>/dev/null | jq -r .BackendState 2>/dev/null || true)
+  if [[ $backend == Running ]]; then
+    say "ok" "tailscale login"
+  else
+    say "missing" "tailscale login (${backend:-unknown}): sudo $TS/tailscale up --qr --operator=$USER --ssh"
+  fi
+fi
+
+# An rc file that already defines the alias some other way is left alone.
+if [[ -n $tailscale ]]; then
+  for rc in "${rcs[@]}"; do
+    if ! grep -qxF '# >>> steam-frame-utils: tailscale >>>' "$rc" \
+        && grep -qE '^[[:space:]]*alias tailscale=' "$rc"; then
+      say "ok" "$rc: tailscale alias, defined outside a steam-frame-utils block"
+    else
+      ensure_block "$rc" tailscale "$SRC/shell-init/tailscale.sh"
+    fi
+  done
 fi
 
 # --- Done ---------------------------------------------------------------------------------------

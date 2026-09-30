@@ -33,8 +33,8 @@ out of date, so after pulling this repo, run it again.
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
 | `bin/podman` | copies to `~/.local/bin/podman` |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
-| `shell-init/` | inserts `tailscale.sh` and `waypipe.sh` into `~/.bashrc`, and into `~/.zshrc` if it exists |
-| Tailscale | reports it only; `--tailscale` runs `install-tailscale.sh` with sudo if `tailscaled` isn't set up, and `--tailscale=trust` adds `--trust-tailnet` |
+| `shell-init/waypipe.sh` | inserts into `~/.bashrc`, and into `~/.zshrc` if it exists |
+| Tailscale | reports what's missing. `--tailscale` fixes only that, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. It inserts `shell-init/tailscale.sh` like `waypipe.sh`, unless the rc file already defines `alias tailscale=`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported |
 
 Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
 file that differs is moved to `<file>.bak-<timestamp>` first. Inserted text sits between
@@ -44,8 +44,9 @@ edit the source here, not the copy.
 ## Tailscale
 
 `install-tailscale.sh` installs or updates Tailscale as a native system service, using kernel
-TUN rather than userspace or proxy mode. `setup.sh --tailscale` runs it. To run it by hand,
-copy the script to the Frame and run it there:
+TUN rather than userspace or proxy mode. `setup.sh --tailscale` runs it and adds the `tailscale`
+alias (see [Shell init](#shell-init)). To run it by hand, copy the script to the Frame and run it
+there:
 
 ```bash
 scp install-tailscale.sh steamos@frame.local:
@@ -135,7 +136,8 @@ The steps are in the script's header comment.
 ## Shell init
 
 `shell-init/` holds one file per feature, each inserted at the end of `~/.bashrc`, and of
-`~/.zshrc` if that exists, as its own marked block. `setup.sh` inserts all of them.
+`~/.zshrc` if that exists, as its own marked block. `setup.sh` always inserts `waypipe.sh`;
+`tailscale.sh` goes in only with `--tailscale`.
 
 The bare host and its distroboxes share one home directory, so the same blocks run in all of them;
 zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is running, using
