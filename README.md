@@ -8,6 +8,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 |---|---|
 | `setup.sh` | checks and installs everything below (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
+| `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `shell-init/` | bash and zsh init for the `tailscale` alias and `waypipe` (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
@@ -19,7 +20,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--zsh] [--waypipe] [--tailscale[=trust]]
+~/steam-frame-utils/setup.sh [--zsh] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -42,6 +43,7 @@ Options add the rest, and each one also fixes only what's missing:
 | `--zsh` | implies `--ubuntu`. zsh in the box, exported as `~/.local/bin/zsh`, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu. An existing `~/.local/bin/zsh` exported from another box is left alone |
 | `--waypipe` | implies `--ubuntu`. waypipe in the box, a copy of its binary in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [Shell init](#shell-init)) |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
+| `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
 The rest of the box's setup, such as mise and tmux, is personal and not part of this.
 
@@ -147,6 +149,32 @@ the key expires, after about 180 days.
 ### Uninstall
 
 The steps are in the script's header comment.
+
+## Nerd Fonts
+
+```bash
+~/steam-frame-utils/install-nerd-fonts.sh [NAME...]
+```
+
+The root filesystem is read-only, but fonts don't need it. fontconfig also reads
+`~/.local/share/fonts`, under Wayland and X11 alike, and Flatpak apps see that folder too. It's on
+`/home`, so SteamOS updates keep it, and the distroboxes share it.
+
+- **NAME** is a release archive without `.tar.xz`, from the
+  [latest release](https://github.com/ryanoasis/nerd-fonts/releases/latest): `JetBrainsMono`,
+  `FiraCode`, `Hack`, `Meslo`, and so on. With no NAME, it installs `JetBrainsMono` and
+  `NerdFontsSymbolsOnly`.
+- **Each font** goes in `~/.local/share/fonts/NerdFonts/NAME`, along with the release tag in
+  `.version`. A re-run replaces only fonts older than the latest release, and checks each archive
+  against the release's `SHA-256.txt`.
+- **`NerdFontsSymbolsOnly`** adds only the icons, so apps left on another font show them too. Its
+  fontconfig rule goes in `~/.config/fontconfig/conf.d`, and makes every font fall back to it for
+  the icon code points.
+- **Afterwards,** restart apps that are already running; the script lists the new families. In
+  Konsole, pick the `… Nerd Font Mono` family, so each icon is one column wide.
+
+To uninstall a font, delete its folder and run `fc-cache -f`. The script's header comment has the
+steps.
 
 ## Shell init
 

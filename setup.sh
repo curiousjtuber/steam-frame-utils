@@ -3,6 +3,7 @@
 # changes what is missing or out of date.
 #
 # Usage:  ./setup.sh [--check] [--yes] [--ubuntu] [--zsh] [--waypipe] [--tailscale[=trust]]
+#                   [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman and the
 # Desktop Mode cursor fix.
@@ -18,6 +19,9 @@
 #                   of the tailscale alias in ~/.bashrc and ~/.zshrc; uses sudo.
 #                   --tailscale=trust also puts tailscale0 in firewalld's trusted zone.
 #                   Without it, what's missing is only reported.
+# --nerd-fonts      install-nerd-fonts.sh for each NAME not installed yet, JetBrainsMono and
+#                   NerdFontsSymbolsOnly by default. Re-run install-nerd-fonts.sh itself to
+#                   update them.
 #
 # The host and its distroboxes share the home directory, so it also runs inside a distrobox,
 # except for what needs the host: --tailscale always, and --ubuntu, --zsh and --waypipe from any
@@ -39,6 +43,7 @@ IN_BOX_RUN=${SFU_IN_BOX:-}
 
 check=0 yes=0 want_ubuntu=0 want_zsh=0 want_waypipe=0
 tailscale=
+nerd_fonts=
 for arg in "$@"; do
   case $arg in
     --check) check=1 ;;
@@ -48,6 +53,8 @@ for arg in "$@"; do
     --waypipe) want_waypipe=1 want_ubuntu=1 ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
+    --nerd-fonts) nerd_fonts=JetBrainsMono,NerdFontsSymbolsOnly ;;
+    --nerd-fonts=?*) nerd_fonts=${arg#*=} ;;
     -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
@@ -233,6 +240,26 @@ copy_file "$SRC/bin/podman" "$HOME/.local/bin/podman" 0755 || true
 
 conf=90-kwin-software-cursor.conf
 copy_file "$SRC/environment.d/$conf" "$HOME/.config/environment.d/$conf" 0644 && reboot_needed=1
+
+# --- Nerd Fonts: --nerd-fonts ------------------------------------------------------------------
+# Only whether each font is there at all; updating needs the network, so it is left to
+# install-nerd-fonts.sh.
+
+if [[ -n $nerd_fonts ]]; then
+  FONTS=${XDG_DATA_HOME:-$HOME/.local/share}/fonts/NerdFonts
+  fonts_missing=()
+  for name in ${nerd_fonts//,/ }; do
+    if [[ -f $FONTS/$name/.version ]]; then
+      say "ok" "Nerd Fonts $name $(<"$FONTS/$name/.version")"
+    else
+      act "Nerd Fonts $name into ${FONTS%/*}" "install"
+      fonts_missing+=("$name")
+    fi
+  done
+  if (( ${#fonts_missing[@]} && ! check )); then
+    bash "$SRC/install-nerd-fonts.sh" "${fonts_missing[@]}"
+  fi
+fi
 
 # --- The ubuntu box: --ubuntu, --zsh, --waypipe -------------------------------------------------
 
