@@ -6,15 +6,46 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 
 | Path | |
 |---|---|
+| `setup.sh` | checks and installs everything below (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `shell-init.sh` | shell init that tells the bare host from its distroboxes (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 
+## Setup
+
+On the Frame's host, not in a distrobox:
+
+```bash
+~/steam-frame-utils/setup.sh --check
+```
+
+```bash
+~/steam-frame-utils/setup.sh
+```
+
+`--check` reports what would change and changes nothing. A re-run touches only what is missing or
+out of date, so after pulling this repo, run it again.
+
+| What | How |
+|---|---|
+| `~/.local/bin` first in `PATH` | adds `export PATH=~/.local/bin:$PATH` to `~/.bashrc` and `~/.profile` if it isn't there |
+| distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
+| `bin/podman` | copies to `~/.local/bin/podman` |
+| `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
+| `shell-init.sh` | inserts into `~/.bashrc`, and into `~/.zshrc` if it exists |
+| Tailscale | reports it only; `--tailscale` runs `install-tailscale.sh` with sudo if `tailscaled` isn't set up, and `--tailscale=trust` adds `--trust-tailnet` |
+
+Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
+file that differs is moved to `<file>.bak-<timestamp>` first. Inserted text sits between
+`# >>> steam-frame-utils: <name> >>>` and `# <<< … <<<` markers, and a re-run replaces it in place;
+edit the source here, not the copy.
+
 ## Tailscale
 
 `install-tailscale.sh` installs or updates Tailscale as a native system service, using kernel
-TUN rather than userspace or proxy mode. Copy the script to the Frame and run it there:
+TUN rather than userspace or proxy mode. `setup.sh --tailscale` runs it. To run it by hand,
+copy the script to the Frame and run it there:
 
 ```bash
 scp install-tailscale.sh steamos@frame.local:
@@ -103,12 +134,8 @@ The steps are in the script's header comment.
 
 ## Shell init
 
-`shell-init.sh` is the Frame's host-specific init. Source it at the end of `~/.bashrc`, and of
-`~/.zshrc` if that exists:
-
-```bash
-source ~/steam-frame-utils/shell-init.sh
-```
+`shell-init.sh` is the Frame's host-specific init. `setup.sh` inserts it at the end of
+`~/.bashrc`, and of `~/.zshrc` if that exists.
 
 The bare host and its distroboxes share one home directory, so the same file runs in all of them;
 zsh itself is a distrobox export. The file therefore checks where it is running, using
@@ -130,8 +157,8 @@ from `GAMESCOPE_WAYLAND_DISPLAY` for that one command. With that, `waypipe ssh <
 Game Mode Konsole shows a remote app on the Frame. The shell itself doesn't export it, because Qt
 and GTK apps started from that terminal would then leave Xwayland for native Wayland.
 
-The containers read the same `~/.bashrc`, so any other host-only line added there runs inside
-every distrobox too. Put such checks in `shell-init.sh` instead.
+The containers read the same `~/.bashrc`, so any host-only line added there outside this block
+runs inside every distrobox too. Put such checks in `shell-init.sh` instead.
 
 ## Distrobox in Desktop Mode
 
@@ -149,12 +176,8 @@ unset-up from Desktop Mode: `unable to find user steamos: no matching entries in
 `bin/podman` switches podman alone to the real runtime dir and user bus when it runs under
 `nested_plasma`, and passes through untouched everywhere else. distrobox still forwards the Desktop
 Mode environment into the container, so GUI apps there reach the nested Plasma's
-`wayland-0`, X display and session bus. Copy it to `~/.local/bin`, which comes before `/usr/bin`
-in `PATH`:
-
-```bash
-install -D -m 0755 ~/steam-frame-utils/bin/podman ~/.local/bin/podman
-```
+`wayland-0`, X display and session bus. `setup.sh` copies it to `~/.local/bin`, which comes
+before `/usr/bin` in `PATH`.
 
 ## Mouse cursor in Desktop Mode
 
@@ -164,11 +187,6 @@ frame itself. The fix comes from Cas and Chary XR's
 [Steam Frame: 10 Things To Do FIRST](https://www.youtube.com/watch?v=jtW2mQd5qYI), credited
 there to ThrillSeeker.
 
-systemd reads `~/.config/environment.d` at login, so copy the file there and reboot:
-
-```bash
-install -D -m 0644 ~/steam-frame-utils/environment.d/90-kwin-software-cursor.conf ~/.config/environment.d/90-kwin-software-cursor.conf
-```
-
-`env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
+systemd reads `~/.config/environment.d` at login. `setup.sh` copies the file there; reboot
+afterwards. `env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
 `~/.config/environment.d/90-kwin-software-cursor.conf` and reboot.

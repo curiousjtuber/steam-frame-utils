@@ -1,6 +1,5 @@
-# Steam Frame host init, for bash and zsh. Source it at the end of ~/.bashrc and ~/.zshrc:
-#
-#   source ~/steam-frame-utils/shell-init.sh
+# Steam Frame host init, for bash and zsh. setup.sh inserts this file into ~/.bashrc and ~/.zshrc,
+# between steam-frame-utils markers; edit it here and re-run setup.sh.
 #
 # The bare host and its distroboxes share this home, so the same file runs in both, and zsh
 # itself is a distrobox export. Checks for "am I on the host" belong here, not in ~/.bashrc.
