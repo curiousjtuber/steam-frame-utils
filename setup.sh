@@ -2,8 +2,8 @@
 # Set up a Steam Frame's user environment from this repo, as the steamos user. Re-running it only
 # changes what is missing or out of date.
 #
-# Usage:  ./setup.sh [--check] [--yes] [--ubuntu] [--zsh] [--waypipe] [--tailscale[=trust]]
-#                   [--nerd-fonts[=NAME,...]]
+# Usage:  ./setup.sh [--check] [--yes] [--ubuntu] [--zsh] [--emacs] [--waypipe]
+#                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman and the
 # Desktop Mode cursor fix.
@@ -13,6 +13,8 @@
 # --ubuntu          create the ubuntu distrobox if it doesn't exist. It asks first: the image is
 #                   about 1.2 GB, and the box's first start takes several minutes.
 # --zsh             zsh from the ubuntu box, exported as ~/.local/bin/zsh; implies --ubuntu
+# --emacs           emacs from the ubuntu box, with emacs and emacsclient exported to ~/.local/bin;
+#                   implies --ubuntu
 # --waypipe         waypipe in the ubuntu box, a copy in ~/.local/bin for the host, and the Game
 #                   Mode waypipe function in ~/.bashrc and ~/.zshrc; implies --ubuntu
 # --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
@@ -24,8 +26,8 @@
 #                   update them.
 #
 # The host and its distroboxes share the home directory, so it also runs inside a distrobox,
-# except for what needs the host: --tailscale always, and --ubuntu, --zsh and --waypipe from any
-# box but ubuntu itself.
+# except for what needs the host: --tailscale always, and --ubuntu, --zsh, --emacs and --waypipe
+# from any box but ubuntu itself.
 #
 # Files are copied, not linked, so the Frame keeps working if this checkout moves or is deleted.
 # A file that differs is backed up to <file>.bak-<timestamp> before it is replaced. Text inserted
@@ -41,7 +43,7 @@ IMAGE=quay.io/toolbx/ubuntu-toolbox:26.04
 # Set when the host re-runs this script inside the ubuntu box for the box's own part.
 IN_BOX_RUN=${SFU_IN_BOX:-}
 
-check=0 yes=0 want_ubuntu=0 want_zsh=0 want_waypipe=0
+check=0 yes=0 want_ubuntu=0 want_zsh=0 want_emacs=0 want_waypipe=0
 tailscale=
 nerd_fonts=
 for arg in "$@"; do
@@ -50,6 +52,7 @@ for arg in "$@"; do
     --yes) yes=1 ;;
     --ubuntu) want_ubuntu=1 ;;
     --zsh) want_zsh=1 want_ubuntu=1 ;;
+    --emacs) want_emacs=1 want_ubuntu=1 ;;
     --waypipe) want_waypipe=1 want_ubuntu=1 ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
@@ -154,7 +157,7 @@ fi
 if [[ -n $box ]]; then
   [[ -z $tailscale ]] || die "--tailscale needs the Frame's host; run it there, not in the $box box"
   (( ! want_ubuntu )) || [[ $box == "$BOX" ]] \
-    || die "--ubuntu, --zsh and --waypipe need the host or the $BOX box, not the $box box"
+    || die "--ubuntu, --zsh, --emacs and --waypipe need the host or the $BOX box, not the $box box"
 fi
 
 # bin/podman and distrobox's exports have to win even when the caller's PATH lacks ~/.local/bin,
@@ -162,10 +165,11 @@ fi
 export PATH=$HOME/.local/bin:$PATH
 
 # --- Inside the ubuntu box ----------------------------------------------------------------------
-# The box's own part of --zsh and --waypipe: apt packages, and the exports into the shared
+# The box's own part of --zsh, --emacs and --waypipe: apt packages, and the exports into the shared
 # ~/.local/bin. The host runs this through distrobox enter.
 
 apt_updated=0
+# apt_ensure PKG [APT_ARG...] -- the extra arguments go to apt-get install
 apt_ensure() {
   if dpkg -s "$1" >/dev/null 2>&1; then
     say "ok" "$1 in the $BOX box"
@@ -174,21 +178,33 @@ apt_ensure() {
   act "$1 in the $BOX box" "apt install"
   (( check )) && return
   (( apt_updated )) || { sudo apt-get update -qq; apt_updated=1; }
-  sudo apt-get install -y "$1"
+  sudo apt-get install -y "$@"
+}
+
+# box_export NAME -- the box's /usr/bin/NAME as ~/.local/bin/NAME. One that exists and isn't
+# this box's export is left alone.
+box_export() {
+  local bin=$HOME/.local/bin/$1
+  if [[ ! -e $bin ]]; then
+    act "$bin, exported from the $BOX box" "export"
+    (( check )) || distrobox-export --bin "/usr/bin/$1" --export-path "$HOME/.local/bin" >/dev/null
+  elif grep -qF -- "-n $BOX " "$bin"; then
+    say "ok" "$bin, exported from the $BOX box"
+  else
+    say "skip" "$bin exists and isn't the $BOX box's export; left alone"
+  fi
 }
 
 in_box_part() {
   if (( want_zsh )); then
     apt_ensure zsh
-    local zsh=$HOME/.local/bin/zsh
-    if [[ ! -e $zsh ]]; then
-      act "$zsh, exported from the $BOX box" "export"
-      (( check )) || distrobox-export --bin /usr/bin/zsh --export-path "$HOME/.local/bin" >/dev/null
-    elif grep -qF -- "-n $BOX " "$zsh"; then
-      say "ok" "$zsh, exported from the $BOX box"
-    else
-      say "skip" "$zsh exists and isn't the $BOX box's export; left alone"
-    fi
+    box_export zsh
+  fi
+  if (( want_emacs )); then
+    # mailutils is only a recommendation, and brings postfix along.
+    apt_ensure emacs mailutils-
+    box_export emacs
+    box_export emacsclient
   fi
   if (( want_waypipe )); then
     apt_ensure waypipe
@@ -261,7 +277,7 @@ if [[ -n $nerd_fonts ]]; then
   fi
 fi
 
-# --- The ubuntu box: --ubuntu, --zsh, --waypipe -------------------------------------------------
+# --- The ubuntu box: --ubuntu, --zsh, --emacs, --waypipe ------------------------------------------
 
 confirm_box() {
   (( yes )) && return 0
@@ -292,13 +308,14 @@ if (( want_ubuntu )); then
     say "skip" "$BOX distrobox: not created"
   fi
 
-  if (( want_zsh || want_waypipe )); then
+  if (( want_zsh || want_emacs || want_waypipe )); then
     if [[ $box == "$BOX" ]]; then
       in_box_part
     elif (( have_box )); then
       args=()
       (( check )) && args+=(--check)
       (( want_zsh )) && args+=(--zsh)
+      (( want_emacs )) && args+=(--emacs)
       (( want_waypipe )) && args+=(--waypipe)
       rc=0
       "$DISTROBOX" enter "$BOX" -- env SFU_IN_BOX=1 FORCE="${FORCE:-}" \
@@ -309,7 +326,7 @@ if (( want_ubuntu )); then
         *) die "the part inside the $BOX box failed (exit $rc)" ;;
       esac
     else
-      say "skip" "--zsh/--waypipe inside the $BOX box: it doesn't exist yet"
+      say "skip" "--zsh/--emacs/--waypipe inside the $BOX box: it doesn't exist yet"
     fi
   fi
 fi

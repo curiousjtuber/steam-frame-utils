@@ -20,7 +20,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--zsh] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--zsh] [--emacs] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -41,6 +41,7 @@ Options add the rest, and each one also fixes only what's missing:
 |---|---|
 | `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
 | `--zsh` | implies `--ubuntu`. zsh in the box, exported as `~/.local/bin/zsh`, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu. An existing `~/.local/bin/zsh` exported from another box is left alone |
+| `--emacs` | implies `--ubuntu`. emacs in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone, as with zsh |
 | `--waypipe` | implies `--ubuntu`. waypipe in the box, a copy of its binary in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [Shell init](#shell-init)) |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
@@ -48,9 +49,9 @@ Options add the rest, and each one also fixes only what's missing:
 The rest of the box's setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
-What needs the host is refused there: `--tailscale`, and `--ubuntu`, `--zsh` and `--waypipe` in
-any box but `ubuntu`. From the host, the box's part of `--zsh` and `--waypipe` runs through
-`distrobox enter ubuntu`.
+What needs the host is refused there: `--tailscale`, and `--ubuntu`, `--zsh`, `--emacs` and
+`--waypipe` in any box but `ubuntu`. From the host, the box's part of `--zsh`, `--emacs` and
+`--waypipe` runs through `distrobox enter ubuntu`.
 
 Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
 file that differs is moved to `<file>.bak-<timestamp>` first. Inserted text sits between
