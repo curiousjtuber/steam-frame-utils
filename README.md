@@ -205,21 +205,14 @@ re-run updates. The header comment of each has the details and the uninstall ste
 `~/.zshrc` if that exists, as its own marked block. `waypipe.sh` goes in with `--waypipe`, and
 `tailscale.sh` with `--tailscale`. `frametop.sh` always goes in, at the top instead.
 
-[Frametop](https://github.com/DeeJanuz/frametop)'s desktop gives Plasma config and state dirs of
-its own (`XDG_CONFIG_HOME=~/.config/frametop`, `XDG_STATE_HOME=~/.local/state/frametop`), so its
-panels and layout never touch the stock desktop's. A terminal in that desktop inherits them. That
-suits KDE tools run from it, which then change the Frametop desktop's settings, but command-line
-tools miss their config: mise takes `~/.config/mise/config.toml` for an untrusted project file and
-asks for `mise trust`. In such a shell, `frametop.sh` points mise at its usual dirs with
-`MISE_CONFIG_DIR` and `MISE_STATE_DIR`, and leaves the XDG ones alone. They're exported ahead of
-`mise activate`, hence the top of the file, since mise's prompt hook reads its config again before
-every prompt. For other tools, `frametop-xdg off` switches the rest of the shell session to the
-usual XDG dirs, `frametop-xdg on` brings the desktop's back, and `frametop-xdg` shows which are in
-use. Outside a Frametop desktop the file does nothing.
-
 The bare host and its distroboxes share one home directory, so the same blocks run in all of them;
-zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is running, using
-`$CONTAINER_ID` or `/run/.containerenv`:
+zsh itself is a distrobox export. The containers read the same `~/.bashrc`, so any host-only line
+added there outside these blocks runs inside every distrobox too. Put such checks in a
+`shell-init/` file instead.
+
+### The tailscale alias
+
+`tailscale.sh` checks where it is running, using `$CONTAINER_ID` or `/run/.containerenv`:
 
 | Where | `tailscale` alias |
 |---|---|
@@ -228,6 +221,8 @@ zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is ru
 
 A distrobox sees neither `/home/.tailscale` nor the daemon's socket in the host's `/run`, so the
 CLI has to run on the host.
+
+### The waypipe function
 
 `waypipe` is a function around the real binary: the `ubuntu` box's `/usr/bin/waypipe`, which
 `--waypipe` also copies to `~/.local/bin` so the host can run it without entering the box. Game
@@ -238,8 +233,23 @@ not set`. When `WAYLAND_DISPLAY` is empty, the function fills it in from
 Mode Konsole shows a remote app on the Frame. The shell itself doesn't export it, because Qt and
 GTK apps started from that terminal would then leave Xwayland for native Wayland.
 
-The containers read the same `~/.bashrc`, so any host-only line added there outside these blocks
-runs inside every distrobox too. Put such checks in a `shell-init/` file instead.
+### Frametop terminals
+
+[Frametop](https://github.com/DeeJanuz/frametop)'s desktop gives Plasma config and state dirs of
+its own (`XDG_CONFIG_HOME=~/.config/frametop`, `XDG_STATE_HOME=~/.local/state/frametop`), so its
+panels and layout never touch the stock desktop's. A terminal in that desktop inherits them. That
+suits KDE tools run from it, which then change the Frametop desktop's settings, but command-line
+tools miss their config: mise takes `~/.config/mise/config.toml` for an untrusted project file and
+asks for `mise trust`.
+
+In such a shell, `frametop.sh` points mise at its usual dirs with `MISE_CONFIG_DIR` and
+`MISE_STATE_DIR`, and leaves the XDG ones alone. They're exported ahead of `mise activate`, hence
+the top of the rc file, since mise's prompt hook reads its config again before every prompt; after
+it, mise still works but warns once in every new shell. For other tools, `frametop-xdg off`
+switches the rest of the shell session to the usual XDG dirs, `frametop-xdg on` brings the
+desktop's back, and `frametop-xdg` shows which are in use. Outside a Frametop desktop the file
+does nothing. Inside a distrobox it isn't needed: `distrobox enter` resets the XDG dirs to the
+usual ones itself.
 
 ## Distrobox in Desktop Mode
 
@@ -258,12 +268,15 @@ unset-up from Desktop Mode: `unable to find user steamos: no matching entries in
 `bin/podman` switches podman alone to the real runtime dir and user bus when it runs under a
 runtime dir nested in `/run/user/<uid>`, such as `nested_plasma` or Frametop's `frametop`, and
 passes through untouched everywhere else. Without it, from Frametop's desktop `distrobox enter`
-fails with `crun: error opening file /run/user/1000/frametop/crun/<id>/status`. distrobox still forwards the Desktop
-Mode environment into the container, so GUI apps there reach the nested Plasma's
-`wayland-0`, X display and session bus. `setup.sh` copies it to `~/.local/bin`, which comes
-before `/usr/bin` in `PATH`.
+fails with `crun: error opening file /run/user/1000/frametop/crun/<id>/status`. distrobox still
+forwards the Desktop Mode environment into the container, so GUI apps there reach the nested
+Plasma's `wayland-0`, X display and session bus. `setup.sh` copies it to `~/.local/bin`, which
+comes before `/usr/bin` in `PATH`.
 
-That holds once an rc file has run, but not for a distrobox export started as a terminal's shell,
+### `~/.distroboxrc`
+
+`~/.local/bin` comes first once an rc file has run, but not for a distrobox export started as a
+terminal's shell,
 such as `~/.local/bin/zsh`: the Frametop desktop's `PATH` doesn't have `~/.local/bin`, so the
 export's `distrobox-enter` finds `/usr/bin/podman` and fails with the crun error above. distrobox
 sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a block there

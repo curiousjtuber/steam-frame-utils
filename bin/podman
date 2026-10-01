@@ -1,8 +1,7 @@
 #!/bin/sh
-# Frame desktop mode runs Plasma nested in gamescope with its own XDG_RUNTIME_DIR
-# and a private D-Bus that has no systemd --user; rootless podman needs the real ones.
-# Frametop's desktop does the same with /run/user/<uid>/frametop, so any runtime dir
-# nested under the real one counts.
+# steam-frame-utils: podman with the real runtime dir and user bus, from
+# nested desktops (Desktop Mode, Frametop) that have their own. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#distrobox-in-desktop-mode
 uid=$(id -u)
 case "$XDG_RUNTIME_DIR" in
   /run/user/"$uid"/*)
