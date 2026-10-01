@@ -10,8 +10,9 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `apps/` | installers for apps: Stream Frame and BSManager (see [Apps](#apps)) |
-| `shell-init/` | bash and zsh init for the `tailscale` alias and `waypipe` (see [Shell init](#shell-init)) |
-| `bin/podman` | lets distrobox work from Desktop Mode (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
+| `shell-init/` | bash and zsh init for the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
+| `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
+| `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 
 ## Setup
@@ -34,6 +35,8 @@ With no options:
 | `~/.local/bin` first in `PATH` | adds `export PATH=~/.local/bin:$PATH` to `~/.bashrc` and `~/.profile`, unless a line there already puts `~/.local/bin` on `PATH` |
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
 | `bin/podman` | copies to `~/.local/bin/podman` |
+| `distrobox/distroboxrc` | inserts into `~/.distroboxrc` |
+| `shell-init/frametop.sh` | inserts at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
 
 Options add the rest, and each one also fixes only what's missing:
@@ -200,7 +203,19 @@ re-run updates. The header comment of each has the details and the uninstall ste
 
 `shell-init/` holds one file per feature, each inserted at the end of `~/.bashrc`, and of
 `~/.zshrc` if that exists, as its own marked block. `waypipe.sh` goes in with `--waypipe`, and
-`tailscale.sh` with `--tailscale`.
+`tailscale.sh` with `--tailscale`. `frametop.sh` always goes in, at the top instead.
+
+[Frametop](https://github.com/DeeJanuz/frametop)'s desktop gives Plasma config and state dirs of
+its own (`XDG_CONFIG_HOME=~/.config/frametop`, `XDG_STATE_HOME=~/.local/state/frametop`), so its
+panels and layout never touch the stock desktop's. A terminal in that desktop inherits them. That
+suits KDE tools run from it, which then change the Frametop desktop's settings, but command-line
+tools miss their config: mise takes `~/.config/mise/config.toml` for an untrusted project file and
+asks for `mise trust`. In such a shell, `frametop.sh` points mise at its usual dirs with
+`MISE_CONFIG_DIR` and `MISE_STATE_DIR`, and leaves the XDG ones alone. They're exported ahead of
+`mise activate`, hence the top of the file, since mise's prompt hook reads its config again before
+every prompt. For other tools, `frametop-xdg off` switches the rest of the shell session to the
+usual XDG dirs, `frametop-xdg on` brings the desktop's back, and `frametop-xdg` shows which are in
+use. Outside a Frametop desktop the file does nothing.
 
 The bare host and its distroboxes share one home directory, so the same blocks run in all of them;
 zsh itself is a distrobox export. `tailscale.sh` therefore checks where it is running, using
@@ -228,7 +243,8 @@ runs inside every distrobox too. Put such checks in a `shell-init/` file instead
 
 ## Distrobox in Desktop Mode
 
-Desktop Mode on the Frame is Plasma nested inside gamescope, with its own session environment:
+Desktop Mode on the Frame is Plasma nested inside gamescope, with its own session environment
+(Frametop's desktop has the same, with `/run/user/1000/frametop`):
 
 - `XDG_RUNTIME_DIR=/run/user/1000/nested_plasma` rather than `/run/user/1000`
 - `DBUS_SESSION_BUS_ADDRESS` is a private bus under `/tmp` with no `systemd --user` behind it
@@ -239,11 +255,19 @@ container's cgroup, so `distrobox enter` fails with
 runtime state under `$XDG_RUNTIME_DIR`, so a container started from SSH or Game Mode looks
 unset-up from Desktop Mode: `unable to find user steamos: no matching entries in passwd file`.
 
-`bin/podman` switches podman alone to the real runtime dir and user bus when it runs under
-`nested_plasma`, and passes through untouched everywhere else. distrobox still forwards the Desktop
+`bin/podman` switches podman alone to the real runtime dir and user bus when it runs under a
+runtime dir nested in `/run/user/<uid>`, such as `nested_plasma` or Frametop's `frametop`, and
+passes through untouched everywhere else. Without it, from Frametop's desktop `distrobox enter`
+fails with `crun: error opening file /run/user/1000/frametop/crun/<id>/status`. distrobox still forwards the Desktop
 Mode environment into the container, so GUI apps there reach the nested Plasma's
 `wayland-0`, X display and session bus. `setup.sh` copies it to `~/.local/bin`, which comes
 before `/usr/bin` in `PATH`.
+
+That holds once an rc file has run, but not for a distrobox export started as a terminal's shell,
+such as `~/.local/bin/zsh`: the Frametop desktop's `PATH` doesn't have `~/.local/bin`, so the
+export's `distrobox-enter` finds `/usr/bin/podman` and fails with the crun error above. distrobox
+sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a block there
+(`distrobox/distroboxrc`) that moves `~/.local/bin` to the front of `PATH` for distrobox alone.
 
 ## Mouse cursor in Desktop Mode
 

@@ -5,8 +5,9 @@
 # Usage:  ./setup.sh [--check] [--yes] [--ubuntu] [--zsh] [--emacs] [--waypipe]
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
-# With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman and the
-# Desktop Mode cursor fix.
+# With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman (with its
+# ~/.distroboxrc block), the Desktop Mode cursor fix, and the Frametop desktop terminal fix in
+# ~/.bashrc and ~/.zshrc.
 #
 # --check           report what would change, and change nothing
 # --yes             create the ubuntu box without asking first
@@ -99,9 +100,10 @@ copy_file() {
   (( check )) || install -D -m "$mode" "$src" "$dst"
 }
 
-# ensure_block FILE NAME CONTENT_FILE -- the marked block NAME holds exactly CONTENT_FILE
+# ensure_block FILE NAME CONTENT_FILE [top] -- the marked block NAME holds exactly CONTENT_FILE.
+# A new block goes at the end of FILE, or with "top" at the start; an existing one stays put.
 ensure_block() {
-  local file=$1 name=$2 content=$3
+  local file=$1 name=$2 content=$3 where=${4:-end}
   local begin="# >>> steam-frame-utils: $name >>>" end="# <<< steam-frame-utils: $name <<<"
   local want; want=$(printf '%s\n' "$begin"; cat "$content"; printf '%s\n' "$end")
   if [[ -f $file ]] && grep -qxF -- "$begin" "$file"; then
@@ -119,7 +121,13 @@ ensure_block() {
     command mv -f "$file.tmp.$$" "$file"
   else
     act "$file: block $name" "add"
-    (( check )) || printf '%s\n' "$want" | append "$file"
+    (( check )) && return
+    if [[ $where == top && -s $file ]]; then
+      { printf '%s\n' "$want"; cat "$file"; } > "$file.tmp.$$"
+      command mv -f "$file.tmp.$$" "$file"
+    else
+      printf '%s\n' "$want" | append "$file"
+    fi
   fi
 }
 
@@ -251,6 +259,8 @@ fi
 # --- bin/podman: distrobox from Desktop Mode --------------------------------------------------------
 
 copy_file "$SRC/bin/podman" "$HOME/.local/bin/podman" 0755 || true
+# distrobox has to find it even where the caller's PATH doesn't have ~/.local/bin first.
+ensure_block "$HOME/.distroboxrc" podman "$SRC/distrobox/distroboxrc"
 
 # --- Mouse cursor in Desktop Mode ---------------------------------------------------------------
 
@@ -344,6 +354,12 @@ rcs=("$HOME/.bashrc")
 if [[ -f $HOME/.zshrc ]] || (( want_zsh )); then
   rcs+=("$HOME/.zshrc")
 fi
+
+# A no-op outside a Frametop desktop's terminal, so it goes in by default. At the top, ahead of
+# mise activate.
+for rc in "${rcs[@]}"; do
+  ensure_block "$rc" frametop "$SRC/shell-init/frametop.sh" top
+done
 
 if (( want_waypipe )); then
   for rc in "${rcs[@]}"; do

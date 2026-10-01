@@ -1,0 +1,10 @@
+# distrobox's own config: every distrobox command and export sources ~/.distroboxrc first.
+# setup.sh inserts this file there between steam-frame-utils markers; edit it here and re-run it.
+#
+# distrobox finds podman on PATH. An export started before any rc file has put ~/.local/bin
+# first -- ~/.local/bin/zsh as a terminal's shell, in the Frametop desktop or Desktop Mode --
+# gets /usr/bin/podman, without bin/podman's switch to the real runtime dir and user bus.
+case $PATH in
+  "$HOME/.local/bin:"*) ;;
+  *) PATH=$HOME/.local/bin:$PATH ;;
+esac
