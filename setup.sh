@@ -14,8 +14,8 @@
 # --ubuntu          create the ubuntu distrobox if it doesn't exist. It asks first: the image is
 #                   about 1.2 GB, and the box's first start takes several minutes.
 # --zsh             zsh from the ubuntu box, exported as ~/.local/bin/zsh; implies --ubuntu
-# --emacs           emacs from the ubuntu box, with emacs and emacsclient exported to ~/.local/bin;
-#                   implies --ubuntu
+# --emacs           emacs-pgtk from the ubuntu box, replacing emacs-gtk, with emacs and emacsclient
+#                   exported to ~/.local/bin; implies --ubuntu
 # --waypipe         waypipe in the ubuntu box, a copy in ~/.local/bin for the host, and the Game
 #                   Mode waypipe function in ~/.bashrc and ~/.zshrc; implies --ubuntu
 # --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
@@ -209,8 +209,10 @@ in_box_part() {
     box_export zsh
   fi
   if (( want_emacs )); then
-    # mailutils is only a recommendation, and brings postfix along.
-    apt_ensure emacs mailutils-
+    # emacs-pgtk is the Wayland build. It conflicts with emacs-gtk, the X11 build that the plain
+    # emacs package picks, so that one is removed. mailutils is only a recommendation, and brings
+    # postfix along.
+    apt_ensure emacs-pgtk emacs-gtk- mailutils-
     box_export emacs
     box_export emacsclient
   fi
