@@ -9,7 +9,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `setup.sh` | checks and installs everything below (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
-| `apps/` | installers for apps: Stream Frame and BSManager (see [Apps](#apps)) |
+| `apps/` | installers for apps: Stream Frame, Moonlight and BSManager (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/frame-prox` | the proximity sensor's readings and threshold, and the setting that moves it (see [Proximity sensor](#proximity-sensor)) |
@@ -191,6 +191,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | Script | App | Where it goes |
 |---|---|---|
 | `install-stream-frame.sh [--yes]` | [Stream Frame](https://streamframe.app), for watching, recording and screenshotting the headset from another device | Flatpak `com.boxtree.StreamFrame`, system-wide, from Boxtree's repo; uses sudo |
+| `install-moonlight.sh [--yes]` | [Moonlight](https://moonlight-stream.org), for streaming games from a Sunshine or GeForce Experience host | Flatpak `com.moonlight_stream.Moonlight`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 
 - **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
@@ -198,6 +199,10 @@ re-run updates. The header comment of each has the details and the uninstall ste
   asks first unless given `--yes`. `/var/lib/flatpak` is a bind mount into `/home/.steamos/offload`,
   so SteamOS updates keep it. It needs ffmpeg on the headset, and SteamOS already has it in
   `/usr/bin`.
+- **Moonlight** comes from Flathub because Ubuntu 26.04 has no `moonlight-qt` for arm64. Like
+  Stream Frame, run it on the host. The first install pulls KDE runtime 6.11, about 400 MB, and
+  asks first unless given `--yes`. The sandbox can reach gamescope, so it can also be added as a
+  non-Steam game for Game Mode.
 - **BSManager** runs the fork's own `install.sh` from its latest release, passing on
   `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
 
