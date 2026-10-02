@@ -207,7 +207,10 @@ re-run updates. The header comment of each has the details and the uninstall ste
 - **KRDC** is for desktop work, Moonlight for games. KRdp, Plasma's Remote Desktop, streams every
   monitor as one picture and moves the pointer through KWin, so it lines up on a multi-monitor
   host, where Sunshine's absolute mouse spans the whole desktop but the stream shows one monitor.
-  Run it on the host. It uses the KDE runtime 6.10 that Stream Frame already installs.
+  Run it on the host. It uses the KDE runtime 6.10 that Stream Frame already installs. On the
+  PC, run `krdpserver` with `--plasma` (a systemd drop-in for `app-org.kde.krdpserver.service`):
+  without it, KRdp goes through the desktop portal, whose permission prompt shows on the PC's
+  screen, and KRDC gets a blank blue screen until someone answers it there.
 - **BSManager** runs the fork's own `install.sh` from its latest release, passing on
   `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
 
