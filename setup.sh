@@ -6,8 +6,8 @@
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman (with its
-# ~/.distroboxrc block), the Desktop Mode cursor fix, and the Frametop desktop terminal fix in
-# ~/.bashrc and ~/.zshrc.
+# ~/.distroboxrc block), frame-prox, the Desktop Mode cursor fix, and the Frametop desktop
+# terminal fix in ~/.bashrc and ~/.zshrc.
 #
 # --check           report what would change, and change nothing
 # --yes             create the ubuntu box without asking first
@@ -263,6 +263,10 @@ fi
 copy_file "$SRC/bin/podman" "$HOME/.local/bin/podman" 0755 || true
 # distrobox has to find it even where the caller's PATH doesn't have ~/.local/bin first.
 ensure_block "$HOME/.distroboxrc" podman "$SRC/distrobox/distroboxrc"
+
+# --- frame-prox: the proximity sensor -----------------------------------------------------------
+
+copy_file "$SRC/bin/frame-prox" "$HOME/.local/bin/frame-prox" 0755 || true
 
 # --- Mouse cursor in Desktop Mode ---------------------------------------------------------------
 

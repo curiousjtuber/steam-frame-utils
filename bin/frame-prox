@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# steam-frame-utils: the proximity sensor that tells SteamVR whether the Frame
+# is worn. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#proximity-sensor
+#
+# Usage:  frame-prox                  a reading, the factory calibration, the settings, and the
+#                                     threshold SteamVR worked out from them
+#         frame-prox --watch [SECS]   a reading every SECS (0.3) until Ctrl-C, against that
+#                                     threshold
+#         frame-prox --set VALUE      set driver_cv.proxSensorThresholdMultipleConst (default
+#                                     1.4); lower detects you from further away
+#
+# --set needs SteamVR running: it goes through vrcmd, and the driver takes it at once.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+KEY=driver_cv.proxSensorThresholdMultipleConst
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "frame-prox: $*" >&2; exit 1; }
+running() { systemctl --user is-active --quiet steamvr.service; }
+
+watch=0 interval=0.3 set=
+case ${1:-} in
+  '') ;;
+  -w|--watch) watch=1 interval=${2:-$interval} ;;
+  --set)
+    set=${2:-}
+    [[ $set =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] || die "--set takes a number, such as 1.0" ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+raw=
+for dev in /sys/bus/iio/devices/*; do
+  [[ -r $dev/in_proximity_raw ]] && { raw=$dev/in_proximity_raw; break; }
+done
+[[ -n $raw ]] || die "no proximity sensor under /sys/bus/iio/devices"
+
+log=$(steamvr logpath)/vrserver.txt
+
+# The cv driver logs the threshold it worked out, at startup and on every settings change.
+read_log() {
+  threshold= noise_adj= logged_at=
+  [[ -r $log ]] || return 0
+  local line
+  line=$(grep -F '[CHmdDirectDeviceControl] set the proximity sensor threshold to' "$log" \
+    | tail -n1)
+  threshold=$(sed -n 's/.*threshold to \([0-9.]*\).*/\1/p' <<<"$line")
+  logged_at=$(awk '{print $5}' <<<"$line")
+  line=$(grep -F 'proximity sensor noise adjustment to' "$log" | tail -n1)
+  noise_adj=$(sed -n 's/.*noise adjustment to \([0-9.]*\).*/\1/p' <<<"$line")
+}
+
+# setting TYPE SECTION.KEY -- the value SteamVR uses, defaults included
+setting() {
+  local value
+  value=$(steamvr cmd "--settings-$1" "$2")
+  value=${value#*=}
+  # vrcmd prints floats as 1.050000, from single precision.
+  [[ $1 == float && -n $value ]] && value=$(printf '%.6g' "$value")
+  echo "$value"
+}
+
+if [[ -n $set ]]; then
+  # Editing steamvr.vrsettings by hand doesn't stick: a running vrserver writes back the
+  # settings it holds in memory on its next change.
+  running || die "SteamVR isn't running; --set changes the setting through it"
+  steamvr cmd --set-settings-float "$KEY" "$set" >/dev/null
+  sleep 0.5
+fi
+
+read_log
+
+if (( watch )); then
+  [[ -n $threshold ]] || die "no threshold in $log; is SteamVR running?"
+  printf 'threshold %.2f, noise adjustment %.2f; Ctrl-C to stop\n' "$threshold" "$noise_adj"
+  printf '%-8s %8s %10s %16s\n' time reading -threshold -noise-threshold
+  while :; do
+    awk -v r="$(<"$raw")" -v t="$threshold" -v n="$noise_adj" -v now="$(date +%T)" \
+      'BEGIN { printf "%-8s %8.2f %+10.2f %+16.2f\n", now, r, r - t, r - n - t }'
+    sleep "$interval"
+  done
+fi
+
+eeprom() { /usr/lib/deckard-eeprom/eeprom_console get "$1" 2>/dev/null | tail -n1; }
+
+printf 'reading     %.2f  (higher is closer; %s)\n' "$(<"$raw")" "${raw%/*}"
+printf 'factory     prox_far %s, prox_noise %s  (EEPROM)\n' "$(eeprom prox_far)" \
+  "$(eeprom prox_noise)"
+if running; then
+  default=$(jq -r ".$KEY // empty" \
+    "$(steamvr path)/drivers/frame_hmd/resources/frame_hmd_additional.vrsettings" 2>/dev/null)
+  printf 'settings    %s %s  (default %s)\n' "$KEY" "$(setting float "$KEY")" "${default:-?}"
+  printf '            driver_cv.proxSensorNoiseExponentConst %s\n' \
+    "$(setting float driver_cv.proxSensorNoiseExponentConst)"
+  printf '            driver_cv.disableProxSensor %s\n' \
+    "$(setting bool driver_cv.disableProxSensor)"
+else
+  echo "settings    SteamVR isn't running"
+fi
+if [[ -n $threshold ]]; then
+  printf 'SteamVR     threshold %.2f, noise adjustment %.2f  (vrserver.txt, %s)\n' \
+    "$threshold" "$noise_adj" "${logged_at%.*}"
+else
+  echo "SteamVR     no threshold in $log yet"
+fi

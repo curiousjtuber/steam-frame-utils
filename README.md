@@ -12,6 +12,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `apps/` | installers for apps: Stream Frame and BSManager (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
+| `bin/frame-prox` | the proximity sensor's readings and threshold, and the setting that moves it (see [Proximity sensor](#proximity-sensor)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 
@@ -36,6 +37,7 @@ With no options:
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
 | `bin/podman` | copies to `~/.local/bin/podman` |
 | `distrobox/distroboxrc` | inserts into `~/.distroboxrc` |
+| `bin/frame-prox` | copies to `~/.local/bin` |
 | `shell-init/frametop.sh` | inserts at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
 
@@ -198,6 +200,80 @@ re-run updates. The header comment of each has the details and the uninstall ste
   `/usr/bin`.
 - **BSManager** runs the fork's own `install.sh` from its latest release, passing on
   `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
+
+## Proximity sensor
+
+A proximity sensor, a Vishay VCNL4040 (the kernel's `vcnl4000` IIO driver), tells SteamVR whether
+the Frame is worn; `steamvr-proxmicmute.service`, for one, mutes the microphone when it isn't. If
+SteamVR keeps losing you while you wear it, its threshold is too high for your face and fit, and
+**`driver_cv.proxSensorThresholdMultipleConst`** is the setting that lowers it.
+
+```bash
+frame-prox
+```
+
+```bash
+frame-prox --watch
+```
+
+```bash
+frame-prox --set 1.0
+```
+
+The first prints a reading, the factory calibration, the settings, and the threshold SteamVR uses;
+`--watch` prints a reading every 0.3 seconds against that threshold. A higher reading is closer.
+`--set` changes the multiplier, and with it the threshold.
+
+- **The threshold comes from SteamVR's `cv` driver,** not the kernel. At startup it reads two
+  factory values from the headset's EEPROM, `prox_far` and `prox_noise`, and works out a
+  threshold and a noise adjustment from them and the `driver_cv` settings
+  `proxSensorThresholdMultipleConst` and `proxSensorNoiseExponentConst`. Their defaults, 1.4 and
+  0.85, are in `/opt/steamvr/drivers/frame_hmd/resources/frame_hmd_additional.vrsettings`. It logs
+  both results to `vrserver.txt`, which is where `frame-prox` gets them.
+- **The formula isn't documented,** but one Frame's numbers fit (`prox_far` − `prox_noise`) ×
+  multiplier for the threshold, and `prox_noise` ^ exponent for the noise adjustment. With
+  `prox_far` 17 and `prox_noise` 5, the default gave a threshold of 16.8 and an adjustment of 3.93.
+  Worn, that Frame read 19.2 to 19.6, and SteamVR lost it now and then. How the driver applies
+  the noise adjustment isn't logged, so `--watch` shows the reading's margin over the threshold
+  both without it (`-threshold`) and with it subtracted too (`-noise-threshold`).
+- **A lower multiplier detects you from further away.** 1.0 gave that Frame a threshold of 12,
+  with readings of about 4.5 off the face, and fixed it. Put the headset on and check that
+  `--watch` stays above the new threshold, and take it off and check that it drops well below.
+- **`--set` goes through `vrcmd --set-settings-float`,** and needs SteamVR running. The driver
+  takes the change at once, and vrserver saves it to your `steamvr.vrsettings` (in
+  `~/.config/openvr/config`), where it outlasts SteamVR updates. Editing that file by hand while
+  SteamVR runs doesn't stick, since vrserver writes back the settings it holds on its next change.
+  Stopping `steamvr.service` to edit it isn't safe either: the gamescope session stops with it and
+  starts it again straight away.
+- **To go back to the default,** `frame-prox --set 1.4`. The key stays in your file, though, so it
+  won't follow a later change of the default in a SteamVR update. To remove it, delete it from
+  `steamvr.vrsettings` while SteamVR is stopped (`sudo steamvr stop`, then `sudo steamvr start`,
+  which stop and start the whole session).
+- **`driver_cv.disableProxSensor`** turns detection off altogether:
+  `steamvr cmd --set-settings-bool driver_cv.disableProxSensor true`.
+- **The kernel's `in_proximity_nearlevel` and threshold events** under
+  `/sys/bus/iio/devices/iio:device*` aren't what SteamVR uses; changing them does nothing for this.
+
+`frame-prox` runs on the host. Run from a distrobox, it goes through `distrobox-host-exec`.
+
+### How the key was found
+
+None of this is documented. OpenVR's `openvr.h` names the core settings keys but not any driver's
+own, such as `driver_cv`'s, and SteamVR's settings UI doesn't show them. Valve's SteamOS 0.4.1
+notes say only that the "proximity sensor detection model" improved. If an update renames the key
+or moves the logic, and `frame-prox` stops finding a threshold, the same steps should find the
+replacement:
+
+- **The settings:** `grep -ril --include='*.vrsettings' prox /opt/steamvr` finds them in one
+  file, `drivers/frame_hmd/resources/frame_hmd_additional.vrsettings`, as bare JSON values.
+- **What reads them:** `strings` on `/opt/steamvr/drivers/cv/bin/linuxarm64/driver_cv.so` shows
+  the key names, the `eeprom_console get prox_far` and `get prox_noise` calls, and the message it
+  logs to `vrserver.txt` with the threshold.
+- **The proof:** changing the multiplier with `vrcmd` and watching that message.
+
+`/usr/lib/deckard-eeprom/eeprom_console` also holds `prox_near` and `prox_mid` (564 and 91 on that
+Frame), apparently factory readings at closer distances; `driver_cv.so` doesn't use them. Use
+only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factory EEPROM.
 
 ## Shell init
 
