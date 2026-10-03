@@ -38,14 +38,14 @@ With no options:
 | `bin/podman` | copies to `~/.local/bin/podman` |
 | `distrobox/distroboxrc` | inserts into `~/.distroboxrc` |
 | `bin/frame-prox` | copies to `~/.local/bin` |
-| `shell-init/frametop.sh` | inserts at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
+| `shell-init/frametop.sh` | inserts into the block at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
 
 Options add the rest, and each one also fixes only what's missing:
 
 | Option | What |
 |---|---|
-| `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
+| `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` in the block at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
 | `--emacs` | implies `--ubuntu`. emacs-pgtk, the Wayland build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. emacs-gtk, the X11 build that a plain `apt install emacs` picks, conflicts with it and is removed. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone |
@@ -173,9 +173,9 @@ works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from he
 lacks. emacs-pgtk and waypipe stay in the box: Homebrew's emacs is terminal-only, and it has no
 waypipe.
 
-`shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes at
-the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of Homebrew. A
-distrobox doesn't see `/home/linuxbrew`, so there the block does nothing.
+`shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes in
+the block at the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of
+Homebrew. A distrobox doesn't see `/home/linuxbrew`, so there it does nothing.
 
 ## Nerd Fonts
 
@@ -310,14 +310,20 @@ only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factor
 
 ## Shell init
 
-`shell-init/` holds one file per feature, each inserted at the end of `~/.bashrc`, and of
-`~/.zshrc` if that exists, as its own marked block. `waypipe.sh` goes in with `--waypipe`, and
-`tailscale.sh` with `--tailscale`. `frametop.sh` always goes in, at the top instead, and `brew.sh`
-goes in at the top with `--brew` (see [Homebrew](#homebrew)).
+`shell-init/` holds one file per feature. `setup.sh` puts them into two marked blocks of
+`~/.bashrc`, and of `~/.zshrc` if that exists, each headed by a link to this section:
 
-The bare host and its distroboxes share one home directory, so the same blocks run in all of them. The containers read the same `~/.bashrc`, so any host-only line
-added there outside these blocks runs inside every distrobox too. Put such checks in a
-`shell-init/` file instead.
+| Block | Files |
+|---|---|
+| `top`, at the start of the file | `brew.sh` with `--brew` (see [Homebrew](#homebrew)), and `frametop.sh` always |
+| `end`, at the end of the file | `waypipe.sh` with `--waypipe`, and `tailscale.sh` with `--tailscale` |
+
+A file stays in once it's there, so a run without its option keeps it. An rc file with blocks of
+earlier versions, one per file, gets its files moved into these two.
+
+The bare host and its distroboxes share one home directory, so the same blocks run in all of them.
+The containers read the same `~/.bashrc`, so any host-only line added there outside these blocks
+runs inside every distrobox too. Put such checks in a `shell-init/` file instead.
 
 ### The tailscale alias
 

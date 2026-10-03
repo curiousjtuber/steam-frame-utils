@@ -135,16 +135,24 @@ ensure_block() {
   fi
 }
 
-# ensure_init FILE NAME PATTERN [top] -- inserts shell-init/NAME.sh, unless FILE already defines it
-# some other way (PATTERN, an ERE, matches a line of that definition)
-ensure_init() {
-  local file=$1 name=$2 pattern=$3 where=${4:-end}
-  if [[ -f $file ]] && ! grep -qxF "# >>> steam-frame-utils: $name >>>" "$file" \
-      && grep -qE "$pattern" "$file"; then
-    say "ok" "$file: $name, defined outside a steam-frame-utils block"
-  else
-    ensure_block "$file" "$name" "$SRC/shell-init/$name.sh" "$where"
-  fi
+# block_lines FILE in|out -- FILE's lines inside, or outside, its steam-frame-utils blocks
+block_lines() {
+  awk -v want="$2" '
+    /^# >>> steam-frame-utils: .* >>>$/ { inside = 1; next }
+    /^# <<< steam-frame-utils: .* <<<$/ { inside = 0; next }
+    (want == "in") == inside' "$1"
+}
+
+# remove_block FILE NAME
+remove_block() {
+  local file=$1 name=$2
+  local begin="# >>> steam-frame-utils: $name >>>" end="# <<< steam-frame-utils: $name <<<"
+  [[ -f $file ]] && grep -qxF -- "$begin" "$file" || return 0
+  act "$file: block $name" "remove"
+  (( check )) && return
+  awk -v b="$begin" -v e="$end" '$0 == b { skip = 1 } !skip; $0 == e { skip = 0 }' "$file" \
+    > "$file.tmp.$$"
+  command mv -f "$file.tmp.$$" "$file"
 }
 
 # --- Where we are -------------------------------------------------------------------------------
@@ -385,39 +393,6 @@ if (( want_ubuntu )); then
   fi
 fi
 
-# --- Shell init ---------------------------------------------------------------------------------
-
-# The containers share these rc files, so each block works on the host and in a distrobox alike.
-# SteamOS has no zsh, so ~/.zshrc is optional; --zsh creates it so that zsh doesn't start with its
-# new-user menu.
-if (( want_zsh )) && [[ ! -e $HOME/.zshrc ]]; then
-  act "$HOME/.zshrc" "create"
-  (( check )) || : > "$HOME/.zshrc"
-fi
-rcs=("$HOME/.bashrc")
-if [[ -f $HOME/.zshrc ]] || (( want_zsh )); then
-  rcs+=("$HOME/.zshrc")
-fi
-
-# A no-op outside a Frametop desktop's terminal, so it goes in by default. At the top, ahead of
-# mise activate.
-for rc in "${rcs[@]}"; do
-  ensure_block "$rc" frametop "$SRC/shell-init/frametop.sh" top
-done
-
-# At the top too, so that ~/.local/bin, put on PATH further down, stays ahead of Homebrew.
-if (( want_brew )); then
-  for rc in "${rcs[@]}"; do
-    ensure_init "$rc" brew '^[^#]*brew shellenv' top
-  done
-fi
-
-if (( want_waypipe )); then
-  for rc in "${rcs[@]}"; do
-    ensure_init "$rc" waypipe '^[[:space:]]*(function[[:space:]]+waypipe|waypipe[[:space:]]*\(\))'
-  done
-fi
-
 # --- Tailscale ----------------------------------------------------------------------------------
 
 # Each part is checked on its own, and --tailscale fixes only what is missing. Only the installer
@@ -481,13 +456,77 @@ else
       say "missing" "tailscale login (${backend:-unknown}): sudo $TS/tailscale up --qr --operator=$USER --ssh"
     fi
   fi
+fi
 
-  if [[ -n $tailscale ]]; then
-    for rc in "${rcs[@]}"; do
-      ensure_init "$rc" tailscale '^[[:space:]]*alias tailscale='
+# --- Shell init ---------------------------------------------------------------------------------
+# shell-init/ goes into two marked blocks of each rc file: "top" at its start, ahead of mise
+# activate and of ~/.local/bin on PATH, and "end" at its end. A file goes in when its option is
+# given, or when a block already has it, so a run without that option keeps it. One that the rc file
+# defines outside the blocks is left out. Blocks of earlier versions, one per file, are removed.
+
+INIT_LINK='# https://github.com/curiousjtuber/steam-frame-utils#shell-init'
+declare -A INIT_PATTERNS=(
+  [frametop]='^[[:space:]]*export FRAMETOP_XDG_CONFIG_HOME='
+  [brew]='^[^#]*brew shellenv'
+  [waypipe]='^[[:space:]]*(function[[:space:]]+waypipe|waypipe[[:space:]]*\(\))'
+  [tailscale]='^[[:space:]]*alias tailscale='
+)
+
+# init_block RC NAME WHERE [INIT WANTED]... -- the block NAME holds each shell-init/INIT.sh that is
+# WANTED (1) or already in a block of RC
+init_block() {
+  local rc=$1 name=$2 where=$3 init wanted
+  shift 3
+  local inits=()
+  while (( $# )); do
+    init=$1 wanted=$2
+    shift 2
+    if [[ -f $rc ]] && block_lines "$rc" out | grep -qE -- "${INIT_PATTERNS[$init]}"; then
+      say "ok" "$rc: $init, defined outside steam-frame-utils"
+    elif (( wanted )) \
+        || { [[ -f $rc ]] && block_lines "$rc" in | grep -qE -- "${INIT_PATTERNS[$init]}"; }; then
+      inits+=("$init")
+    fi
+  done
+  if (( ! ${#inits[@]} )); then
+    remove_block "$rc" "$name"
+    return
+  fi
+  local content; content=$(mktemp)
+  {
+    printf '%s\n' "$INIT_LINK"
+    for init in "${inits[@]}"; do
+      cat "$SRC/shell-init/$init.sh"
+    done
+  } > "$content"
+  ensure_block "$rc" "$name" "$content" "$where"
+  command rm -f "$content"
+}
+
+# The containers share these rc files, so each file works on the host and in a distrobox alike.
+# SteamOS has no zsh, so ~/.zshrc is optional; --zsh creates it so that zsh doesn't start with its
+# new-user menu.
+if (( want_zsh )) && [[ ! -e $HOME/.zshrc ]]; then
+  act "$HOME/.zshrc" "create"
+  (( check )) || : > "$HOME/.zshrc"
+fi
+rcs=("$HOME/.bashrc")
+if [[ -f $HOME/.zshrc ]] || (( want_zsh )); then
+  rcs+=("$HOME/.zshrc")
+fi
+
+want_ts_init=0
+[[ -z $box && -n $tailscale ]] && want_ts_init=1
+for rc in "${rcs[@]}"; do
+  # frametop is a no-op outside a Frametop desktop's terminal, so it always goes in.
+  init_block "$rc" top top brew "$want_brew" frametop 1
+  init_block "$rc" end end waypipe "$want_waypipe" tailscale "$want_ts_init"
+  if [[ -f $rc ]]; then
+    for old in $(sed -n 's/^# >>> steam-frame-utils: \(.*\) >>>$/\1/p' "$rc"); do
+      [[ $old == top || $old == end ]] || remove_block "$rc" "$old"
     done
   fi
-fi
+done
 
 # --- Done ---------------------------------------------------------------------------------------
 
