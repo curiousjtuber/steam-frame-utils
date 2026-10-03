@@ -6,7 +6,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 
 | Path | |
 |---|---|
-| `setup.sh` | checks and installs everything below (see [Setup](#setup)) |
+| `setup.sh` | checks and installs everything below but `apps/`, whose installers are run by hand (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `apps/` | installers for apps: Stream Frame, Moonlight, KRDC and BSManager (see [Apps](#apps)) |
