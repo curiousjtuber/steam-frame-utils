@@ -10,7 +10,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `apps/` | installers for apps: Stream Frame, Moonlight, KRDC and BSManager (see [Apps](#apps)) |
-| `shell-init/` | bash and zsh init for the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
+| `shell-init/` | bash and zsh init for Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/frame-prox` | the proximity sensor's readings and threshold, and the setting that moves it (see [Proximity sensor](#proximity-sensor)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
@@ -23,7 +23,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--zsh] [--emacs] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--brew] [--zsh] [--emacs] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -45,18 +45,19 @@ Options add the rest, and each one also fixes only what's missing:
 
 | Option | What |
 |---|---|
+| `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, and `shell-init/brew.sh` at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
+| `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
-| `--zsh` | implies `--ubuntu`. zsh in the box, exported as `~/.local/bin/zsh`, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu. An existing `~/.local/bin/zsh` exported from another box is left alone |
-| `--emacs` | implies `--ubuntu`. emacs-pgtk, the Wayland build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. emacs-gtk, the X11 build that a plain `apt install emacs` picks, conflicts with it and is removed. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone, as with zsh |
+| `--emacs` | implies `--ubuntu`. emacs-pgtk, the Wayland build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. emacs-gtk, the X11 build that a plain `apt install emacs` picks, conflicts with it and is removed. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone |
 | `--waypipe` | implies `--ubuntu`. waypipe in the box, a copy of its binary in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [Shell init](#shell-init)) |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
-The rest of the box's setup, such as mise and tmux, is personal and not part of this.
+The rest of the setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
-What needs the host is refused there: `--tailscale`, and `--ubuntu`, `--zsh`, `--emacs` and
-`--waypipe` in any box but `ubuntu`. From the host, the box's part of `--zsh`, `--emacs` and
+What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--ubuntu`,
+`--emacs` and `--waypipe` in any box but `ubuntu`. From the host, the box's part of `--emacs` and
 `--waypipe` runs through `distrobox enter ubuntu`.
 
 Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
@@ -156,6 +157,24 @@ the key expires, after about 180 days.
 ### Uninstall
 
 The steps are in the script's header comment.
+
+## Homebrew
+
+`setup.sh --brew` installs Homebrew with its official installer, in the default prefix
+`/home/linuxbrew/.linuxbrew`. Homebrew builds its arm64 Linux bottles for that prefix only; anywhere
+else, every formula builds from source. `/home` is its own partition, so the install survives
+SteamOS updates. The installer can't ask for a sudo password when it runs unattended, so
+`setup.sh` creates `/home/linuxbrew` for the `steamos` user first, and the installer then needs no
+sudo at all.
+
+Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
+works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than the
+`ubuntu` box, which starts it in about half the time. emacs-pgtk and waypipe stay in the box:
+Homebrew's emacs is terminal-only, and it has no waypipe.
+
+`shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes at
+the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of Homebrew. A
+distrobox doesn't see `/home/linuxbrew`, so there the block does nothing.
 
 ## Nerd Fonts
 
@@ -292,10 +311,10 @@ only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factor
 
 `shell-init/` holds one file per feature, each inserted at the end of `~/.bashrc`, and of
 `~/.zshrc` if that exists, as its own marked block. `waypipe.sh` goes in with `--waypipe`, and
-`tailscale.sh` with `--tailscale`. `frametop.sh` always goes in, at the top instead.
+`tailscale.sh` with `--tailscale`. `frametop.sh` always goes in, at the top instead, and `brew.sh`
+goes in at the top with `--brew` (see [Homebrew](#homebrew)).
 
-The bare host and its distroboxes share one home directory, so the same blocks run in all of them;
-zsh itself is a distrobox export. The containers read the same `~/.bashrc`, so any host-only line
+The bare host and its distroboxes share one home directory, so the same blocks run in all of them. The containers read the same `~/.bashrc`, so any host-only line
 added there outside these blocks runs inside every distrobox too. Put such checks in a
 `shell-init/` file instead.
 
@@ -364,11 +383,10 @@ comes before `/usr/bin` in `PATH`.
 
 ### `~/.distroboxrc`
 
-`~/.local/bin` comes first once an rc file has run, but not for a distrobox export started as a
-terminal's shell,
-such as `~/.local/bin/zsh`: the Frametop desktop's `PATH` doesn't have `~/.local/bin`, so the
-export's `distrobox-enter` finds `/usr/bin/podman` and fails with the crun error above. distrobox
-sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a block there
+`~/.local/bin` comes first once an rc file has run, but not for a distrobox export started
+without one, such as `~/.local/bin/emacs` from a launcher: the Frametop desktop's `PATH` doesn't
+have `~/.local/bin`, so the export's `distrobox-enter` finds `/usr/bin/podman` and fails with the
+crun error above. distrobox sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a block there
 (`distrobox/distroboxrc`) that moves `~/.local/bin` to the front of `PATH` for distrobox alone.
 
 ## Mouse cursor in Desktop Mode

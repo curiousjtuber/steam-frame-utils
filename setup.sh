@@ -2,7 +2,7 @@
 # Set up a Steam Frame's user environment from this repo, as the steamos user. Re-running it only
 # changes what is missing or out of date.
 #
-# Usage:  ./setup.sh [--check] [--yes] [--ubuntu] [--zsh] [--emacs] [--waypipe]
+# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--ubuntu] [--emacs] [--waypipe]
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman (with its
@@ -11,9 +11,11 @@
 #
 # --check           report what would change, and change nothing
 # --yes             create the ubuntu box without asking first
+# --brew            Homebrew in /home/linuxbrew/.linuxbrew if it isn't there, and brew shellenv
+#                   in ~/.bashrc and ~/.zshrc; uses sudo once, to create /home/linuxbrew
+# --zsh             zsh from Homebrew; implies --brew
 # --ubuntu          create the ubuntu distrobox if it doesn't exist. It asks first: the image is
 #                   about 1.2 GB, and the box's first start takes several minutes.
-# --zsh             zsh from the ubuntu box, exported as ~/.local/bin/zsh; implies --ubuntu
 # --emacs           emacs-pgtk from the ubuntu box, replacing emacs-gtk, with emacs and emacsclient
 #                   exported to ~/.local/bin; implies --ubuntu
 # --waypipe         waypipe in the ubuntu box, a copy in ~/.local/bin for the host, and the Game
@@ -27,8 +29,8 @@
 #                   update them.
 #
 # The host and its distroboxes share the home directory, so it also runs inside a distrobox,
-# except for what needs the host: --tailscale always, and --ubuntu, --zsh, --emacs and --waypipe
-# from any box but ubuntu itself.
+# except for what needs the host: --tailscale, --brew and --zsh always, and --ubuntu, --emacs and
+# --waypipe from any box but ubuntu itself.
 #
 # Files are copied, not linked, so the Frame keeps working if this checkout moves or is deleted.
 # A file that differs is backed up to <file>.bak-<timestamp> before it is replaced. Text inserted
@@ -44,15 +46,16 @@ IMAGE=quay.io/toolbx/ubuntu-toolbox:26.04
 # Set when the host re-runs this script inside the ubuntu box for the box's own part.
 IN_BOX_RUN=${SFU_IN_BOX:-}
 
-check=0 yes=0 want_ubuntu=0 want_zsh=0 want_emacs=0 want_waypipe=0
+check=0 yes=0 want_brew=0 want_zsh=0 want_ubuntu=0 want_emacs=0 want_waypipe=0
 tailscale=
 nerd_fonts=
 for arg in "$@"; do
   case $arg in
     --check) check=1 ;;
     --yes) yes=1 ;;
+    --brew) want_brew=1 ;;
+    --zsh) want_zsh=1 want_brew=1 ;;
     --ubuntu) want_ubuntu=1 ;;
-    --zsh) want_zsh=1 want_ubuntu=1 ;;
     --emacs) want_emacs=1 want_ubuntu=1 ;;
     --waypipe) want_waypipe=1 want_ubuntu=1 ;;
     --tailscale) tailscale=plain ;;
@@ -131,15 +134,15 @@ ensure_block() {
   fi
 }
 
-# ensure_init FILE NAME PATTERN -- inserts shell-init/NAME.sh, unless FILE already defines it some
-# other way (PATTERN, an ERE, matches a line of that definition)
+# ensure_init FILE NAME PATTERN [top] -- inserts shell-init/NAME.sh, unless FILE already defines it
+# some other way (PATTERN, an ERE, matches a line of that definition)
 ensure_init() {
-  local file=$1 name=$2 pattern=$3
+  local file=$1 name=$2 pattern=$3 where=${4:-end}
   if [[ -f $file ]] && ! grep -qxF "# >>> steam-frame-utils: $name >>>" "$file" \
       && grep -qE "$pattern" "$file"; then
     say "ok" "$file: $name, defined outside a steam-frame-utils block"
   else
-    ensure_block "$file" "$name" "$SRC/shell-init/$name.sh"
+    ensure_block "$file" "$name" "$SRC/shell-init/$name.sh" "$where"
   fi
 }
 
@@ -164,8 +167,11 @@ fi
 
 if [[ -n $box ]]; then
   [[ -z $tailscale ]] || die "--tailscale needs the Frame's host; run it there, not in the $box box"
+  (( ! want_brew )) \
+    || die "--brew and --zsh need the Frame's host, since a distrobox doesn't see /home/linuxbrew;" \
+      "run it there, not in the $box box"
   (( ! want_ubuntu )) || [[ $box == "$BOX" ]] \
-    || die "--ubuntu, --zsh, --emacs and --waypipe need the host or the $BOX box, not the $box box"
+    || die "--ubuntu, --emacs and --waypipe need the host or the $BOX box, not the $box box"
 fi
 
 # bin/podman and distrobox's exports have to win even when the caller's PATH lacks ~/.local/bin,
@@ -173,7 +179,7 @@ fi
 export PATH=$HOME/.local/bin:$PATH
 
 # --- Inside the ubuntu box ----------------------------------------------------------------------
-# The box's own part of --zsh, --emacs and --waypipe: apt packages, and the exports into the shared
+# The box's own part of --emacs and --waypipe: apt packages, and the exports into the shared
 # ~/.local/bin. The host runs this through distrobox enter.
 
 apt_updated=0
@@ -204,10 +210,6 @@ box_export() {
 }
 
 in_box_part() {
-  if (( want_zsh )); then
-    apt_ensure zsh
-    box_export zsh
-  fi
   if (( want_emacs )); then
     # emacs-pgtk is the Wayland build. It conflicts with emacs-gtk, the X11 build that the plain
     # emacs package picks, so that one is removed. mailutils is only a recommendation, and brings
@@ -293,7 +295,42 @@ if [[ -n $nerd_fonts ]]; then
   fi
 fi
 
-# --- The ubuntu box: --ubuntu, --zsh, --emacs, --waypipe ------------------------------------------
+# --- Homebrew: --brew, --zsh -------------------------------------------------------------------
+# The default prefix, since Homebrew's bottles are built for it; elsewhere everything builds from
+# source. /home survives SteamOS updates.
+
+BREW_PREFIX=/home/linuxbrew/.linuxbrew
+BREW=$BREW_PREFIX/bin/brew
+
+# brew_ensure FORMULA
+brew_ensure() {
+  if [[ -x $BREW ]] && "$BREW" list --formula "$1" >/dev/null 2>&1; then
+    say "ok" "$1 from Homebrew"
+    return
+  fi
+  act "$1 from Homebrew" "brew install"
+  (( check )) && return
+  HOMEBREW_NO_ENV_HINTS=1 "$BREW" install "$1"
+}
+
+if (( want_brew )); then
+  if [[ -x $BREW ]]; then
+    say "ok" "Homebrew $("$BREW" --version 2>/dev/null | sed -n '1s/^Homebrew //p')"
+  else
+    act "Homebrew into $BREW_PREFIX" "install"
+    if (( ! check )); then
+      # The installer needs sudo only where it can't write /home/linuxbrew, and it can't ask for a
+      # password when it runs unattended. With the directory ours, it needs none.
+      [[ -w ${BREW_PREFIX%/*} ]] || sudo install -d -o "$USER" -g "$(id -gn)" "${BREW_PREFIX%/*}"
+      NONINTERACTIVE=1 bash -c \
+        "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+  fi
+fi
+
+(( want_zsh )) && brew_ensure zsh
+
+# --- The ubuntu box: --ubuntu, --emacs, --waypipe -------------------------------------------------
 
 confirm_box() {
   (( yes )) && return 0
@@ -324,13 +361,12 @@ if (( want_ubuntu )); then
     say "skip" "$BOX distrobox: not created"
   fi
 
-  if (( want_zsh || want_emacs || want_waypipe )); then
+  if (( want_emacs || want_waypipe )); then
     if [[ $box == "$BOX" ]]; then
       in_box_part
     elif (( have_box )); then
       args=()
       (( check )) && args+=(--check)
-      (( want_zsh )) && args+=(--zsh)
       (( want_emacs )) && args+=(--emacs)
       (( want_waypipe )) && args+=(--waypipe)
       rc=0
@@ -342,7 +378,7 @@ if (( want_ubuntu )); then
         *) die "the part inside the $BOX box failed (exit $rc)" ;;
       esac
     else
-      say "skip" "--zsh/--emacs/--waypipe inside the $BOX box: it doesn't exist yet"
+      say "skip" "--emacs/--waypipe inside the $BOX box: it doesn't exist yet"
     fi
   fi
 fi
@@ -350,8 +386,8 @@ fi
 # --- Shell init ---------------------------------------------------------------------------------
 
 # The containers share these rc files, so each block works on the host and in a distrobox alike.
-# zsh only exists inside a distrobox, so ~/.zshrc is optional; --zsh creates it so that zsh
-# doesn't start with its new-user menu.
+# SteamOS has no zsh, so ~/.zshrc is optional; --zsh creates it so that zsh doesn't start with its
+# new-user menu.
 if (( want_zsh )) && [[ ! -e $HOME/.zshrc ]]; then
   act "$HOME/.zshrc" "create"
   (( check )) || : > "$HOME/.zshrc"
@@ -366,6 +402,13 @@ fi
 for rc in "${rcs[@]}"; do
   ensure_block "$rc" frametop "$SRC/shell-init/frametop.sh" top
 done
+
+# At the top too, so that ~/.local/bin, put on PATH further down, stays ahead of Homebrew.
+if (( want_brew )); then
+  for rc in "${rcs[@]}"; do
+    ensure_init "$rc" brew '^[^#]*brew shellenv' top
+  done
+fi
 
 if (( want_waypipe )); then
   for rc in "${rcs[@]}"; do
