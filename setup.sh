@@ -11,8 +11,9 @@
 #
 # --check           report what would change, and change nothing
 # --yes             create the ubuntu box without asking first
-# --brew            Homebrew in /home/linuxbrew/.linuxbrew if it isn't there, and brew shellenv
-#                   in ~/.bashrc and ~/.zshrc; uses sudo once, to create /home/linuxbrew
+# --brew            Homebrew in /home/linuxbrew/.linuxbrew if it isn't there, wl-clipboard from
+#                   it, and brew shellenv in ~/.bashrc and ~/.zshrc; uses sudo once, to create
+#                   /home/linuxbrew
 # --zsh             zsh from Homebrew; implies --brew
 # --ubuntu          create the ubuntu distrobox if it doesn't exist. It asks first: the image is
 #                   about 1.2 GB, and the box's first start takes several minutes.
@@ -326,6 +327,7 @@ if (( want_brew )); then
         "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
   fi
+  brew_ensure wl-clipboard
 fi
 
 (( want_zsh )) && brew_ensure zsh

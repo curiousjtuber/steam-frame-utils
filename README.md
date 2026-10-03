@@ -45,7 +45,7 @@ Options add the rest, and each one also fixes only what's missing:
 
 | Option | What |
 |---|---|
-| `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, and `shell-init/brew.sh` at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
+| `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
 | `--emacs` | implies `--ubuntu`. emacs-pgtk, the Wayland build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. emacs-gtk, the X11 build that a plain `apt install emacs` picks, conflicts with it and is removed. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone |
@@ -169,8 +169,9 @@ sudo at all.
 
 Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
 works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than the
-`ubuntu` box, which starts it in about half the time. emacs-pgtk and waypipe stay in the box:
-Homebrew's emacs is terminal-only, and it has no waypipe.
+`ubuntu` box, which starts it in about half the time, and so does wl-clipboard, which SteamOS
+lacks. emacs-pgtk and waypipe stay in the box: Homebrew's emacs is terminal-only, and it has no
+waypipe.
 
 `shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes at
 the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of Homebrew. A
