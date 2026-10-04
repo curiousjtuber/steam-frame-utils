@@ -1,3 +1,8 @@
+# steam-frame-utils: terminals in the Frametop desktop. Keeps mise on its own
+# dirs; frametop-xdg off|on switches this shell's XDG dirs. Must stay above
+# mise activate: sourced from the block setup.sh puts at the top of ~/.bashrc
+# and ~/.zshrc. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#frametop-terminals
 if [[ ${XDG_CONFIG_HOME:-} == "$HOME/.config/frametop" ]]; then
     export MISE_CONFIG_DIR=$HOME/.config/mise
     export MISE_STATE_DIR=$HOME/.local/state/mise
