@@ -39,7 +39,7 @@ With no options:
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
 | `distrobox/distroboxrc` | inserts into `~/.distroboxrc`, which puts this checkout's `bin/` first for distrobox |
 | `bin/` | goes on `PATH` from this checkout, through `shell-init/bin.sh` (see [Shell init](#shell-init)), so a `git pull` updates its scripts. A copy in `~/.local/bin` from an earlier version would come first, so it is backed up to `<file>.bak-<timestamp>` |
-| `shell-init/frametop.sh` | inserts into the block at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
+| `shell-init/frametop.sh` | sourced from the block at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
 
 Options add the rest, and each one also fixes only what's missing:
@@ -61,9 +61,10 @@ What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `
 `--emacs` and `--waypipe=box` in any box but `ubuntu`. From the host, the box's part of `--emacs`
 and `--waypipe=box` runs through `distrobox enter ubuntu`.
 
-Apart from `bin/`, which stays in the checkout and goes on `PATH` from there, files are copied, not
-linked, so they keep working if this checkout moves or goes. A file that differs is moved to
-`<file>.bak-<timestamp>` first. Inserted text sits between
+`bin/` and `shell-init/` are used from the checkout: `bin/` goes on `PATH`, and the rc files source
+`shell-init/`, so a `git pull` updates both. Other files are copied, not linked, so they keep
+working if this checkout moves or goes. A file that differs is moved to `<file>.bak-<timestamp>`
+first. Inserted text sits between
 `# >>> steam-frame-utils: <name> >>>` and `# <<< … <<<` markers, and a re-run replaces it in place;
 edit the source here, not the copy. A shell-init file isn't inserted into an rc file that already
 defines the same alias or function some other way.
@@ -325,8 +326,24 @@ only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factor
 
 ## Shell init
 
-`shell-init/` holds one file per feature. `setup.sh` puts them into two marked blocks of
-`~/.bashrc`, and of `~/.zshrc` if that exists, each headed by a link to this section:
+`shell-init/` holds one file per feature. `setup.sh` puts two marked blocks into `~/.bashrc`, and
+into `~/.zshrc` if that exists, each a short loop that sources the chosen files from this checkout:
+
+```sh
+# >>> steam-frame-utils: top >>>
+# https://github.com/curiousjtuber/steam-frame-utils#shell-init
+for _sfu in brew frametop bin; do
+    _sfu="$HOME/steam-frame-utils/shell-init/$_sfu.sh"
+    [[ -r $_sfu ]] && source "$_sfu"
+done
+unset _sfu
+# <<< steam-frame-utils: top <<<
+```
+
+The files are read live, so a `git pull` changes the next shell without a `setup.sh` re-run. The
+path is filled in from where `setup.sh` runs, so the checkout can be anywhere; after moving it, run
+`setup.sh` again, and until then the `-r` test just skips the files, rather than failing every
+shell start. `setup.sh` refuses a path with `"`, `$`, `` ` ``, `\`, `|` or `&` in it.
 
 | Block | Files |
 |---|---|
@@ -334,13 +351,12 @@ only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factor
 | `end`, at the end of the file | `waypipe.sh` with `--waypipe`, and `tailscale.sh` with `--tailscale` |
 
 `bin.sh` puts this checkout's `bin/` on `PATH`, ahead of Homebrew and behind `~/.local/bin`, which
-the rc file puts first further down. distrobox puts it first too, through
-[`~/.distroboxrc`](#distroboxrc). Its path is filled in from where `setup.sh` runs, so the
-checkout can be anywhere, and after moving it, run `setup.sh` again. `setup.sh` refuses a path
-with `"`, `$`, `` ` ``, `\`, `|` or `&` in it.
+the rc file puts first further down. It finds the checkout from its own path (`BASH_SOURCE` in
+bash, `%x` in zsh), so nothing but the blocks names it. distrobox puts `bin/` first too, through
+[`~/.distroboxrc`](#distroboxrc).
 
 A file stays in once it's there, so a run without its option keeps it. An rc file with blocks of
-earlier versions, one per file, gets its files moved into these two.
+earlier versions, one per file or with the files' text inline, gets them replaced by these two.
 
 The bare host and its distroboxes share one home directory, so the same blocks run in all of them.
 The containers read the same `~/.bashrc`, so any host-only line added there outside these blocks

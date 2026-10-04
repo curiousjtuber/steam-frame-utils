@@ -38,9 +38,10 @@
 # except for what needs the host: --tailscale, --brew and --zsh always, and --ubuntu, --emacs and
 # --waypipe=box from any box but ubuntu itself.
 #
-# bin/ goes on PATH from this checkout, for shells and for distrobox, so a git pull updates its
-# scripts; after moving the checkout, re-run this. Other files are copied, not linked, so they keep
-# working if it moves or is deleted. A file that differs is backed up to <file>.bak-<timestamp>
+# bin/ and shell-init/ are used from this checkout: bin/ goes on PATH, for shells and for
+# distrobox, and the rc files source shell-init/, so a git pull updates both; after moving the
+# checkout, re-run this. Other files are copied, not linked, so they keep working if it moves or
+# is deleted. A file that differs is backed up to <file>.bak-<timestamp>
 # before it is replaced. Text inserted into shared files sits between
 # "# >>> steam-frame-utils: <name> >>>" markers, and a later run replaces the block in place.
 
@@ -53,6 +54,8 @@ case $SRC in
     echo "setup.sh: can't put $SRC on PATH: move the checkout to a path without \" \$ \` \\ | or &" >&2
     exit 1 ;;
 esac
+# The checkout's path as the rc files get it: under $HOME when it is there.
+SRC_RC=${SRC/#$HOME/\$HOME}
 STAMP=$(date +%Y%m%d-%H%M%S)
 BOX=ubuntu
 IMAGE=quay.io/toolbx/ubuntu-toolbox:26.04
@@ -149,8 +152,8 @@ ensure_block() {
   fi
 }
 
-# with_src FILE -- FILE with @SRC@ as this checkout, written with $HOME when it is under it
-with_src() { sed "s|@SRC@|${SRC/#$HOME/\$HOME}|g" "$1"; }
+# with_src FILE -- FILE with @SRC@ as this checkout
+with_src() { sed "s|@SRC@|$SRC_RC|g" "$1"; }
 
 # block_lines FILE in|out -- FILE's lines inside, or outside, its steam-frame-utils blocks
 block_lines() {
@@ -559,10 +562,11 @@ else
 fi
 
 # --- Shell init ---------------------------------------------------------------------------------
-# shell-init/ goes into two marked blocks of each rc file: "top" at its start, ahead of mise
-# activate and of ~/.local/bin on PATH, and "end" at its end. A file goes in when its option is
-# given, or when a block already has it, so a run without that option keeps it. One that the rc file
-# defines outside the blocks is left out. Blocks of earlier versions, one per file, are removed.
+# Two marked blocks of each rc file source files of shell-init/ from this checkout: "top" at its
+# start, ahead of mise activate and of ~/.local/bin on PATH, and "end" at its end. A file goes in
+# when its option is given, or when a block already has it, so a run without that option keeps it.
+# One that the rc file defines outside the blocks is left out. Blocks of earlier versions, one per
+# file or with the file's text inline, are replaced.
 
 INIT_LINK='# https://github.com/curiousjtuber/steam-frame-utils#shell-init'
 # bin's pattern names this checkout's directory, so that some other bin/ on PATH doesn't match.
@@ -575,8 +579,15 @@ declare -A INIT_PATTERNS=(
   [tailscale]='^[[:space:]]*alias tailscale='
 )
 
-# init_block RC NAME WHERE [INIT WANTED]... -- the block NAME holds each shell-init/INIT.sh that is
-# WANTED (1) or already in a block of RC
+# block_has_init RC INIT -- a block of RC sources shell-init/INIT.sh, or holds its text inline, as
+# blocks of earlier versions did
+block_has_init() {
+  [[ -f $1 ]] && block_lines "$1" in \
+    | grep -qE -- "^for _sfu in( [a-z-]+)* $2( [a-z-]+)*; do\$|${INIT_PATTERNS[$2]}"
+}
+
+# init_block RC NAME WHERE [INIT WANTED]... -- the block NAME sources each shell-init/INIT.sh that
+# is WANTED (1) or already in a block of RC
 init_block() {
   local rc=$1 name=$2 where=$3 init wanted
   shift 3
@@ -586,8 +597,7 @@ init_block() {
     shift 2
     if [[ -f $rc ]] && block_lines "$rc" out | grep -qE -- "${INIT_PATTERNS[$init]}"; then
       say "ok" "$rc: $init, defined outside steam-frame-utils"
-    elif (( wanted )) \
-        || { [[ -f $rc ]] && block_lines "$rc" in | grep -qE -- "${INIT_PATTERNS[$init]}"; }; then
+    elif (( wanted )) || block_has_init "$rc" "$init"; then
       inits+=("$init")
     fi
   done
@@ -595,12 +605,14 @@ init_block() {
     remove_block "$rc" "$name"
     return
   fi
+  # A missing file, as after the checkout moved, is skipped rather than an error at every shell
+  # start. The loop variable is reused for the path, and unset so that it doesn't linger.
   local content; content=$(mktemp)
   {
     printf '%s\n' "$INIT_LINK"
-    for init in "${inits[@]}"; do
-      with_src "$SRC/shell-init/$init.sh"
-    done
+    printf 'for _sfu in %s; do\n' "${inits[*]}"
+    printf '    _sfu="%s/shell-init/$_sfu.sh"\n' "$SRC_RC"
+    printf '    [[ -r $_sfu ]] && source "$_sfu"\ndone\nunset _sfu\n'
   } > "$content"
   ensure_block "$rc" "$name" "$content" "$where"
   command rm -f "$content"
