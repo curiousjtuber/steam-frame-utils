@@ -10,7 +10,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `install-waypipe.sh` | waypipe for the host from Arch Linux ARM's package, no root needed (see [The waypipe function](#the-waypipe-function)) |
-| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC and BSManager (see [Apps](#apps)) |
+| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, BSManager and Full Keyboard (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/frame-prox` | the proximity sensor's readings and threshold, and the setting that moves it (see [Proximity sensor](#proximity-sensor)) |
@@ -218,6 +218,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | `install-moonlight.sh [--yes]` | [Moonlight](https://moonlight-stream.org), for streaming games from a Sunshine or GeForce Experience host | Flatpak `com.moonlight_stream.Moonlight`, system-wide, from Flathub; uses sudo |
 | `install-krdc.sh [--yes]` | [KRDC](https://apps.kde.org/krdc), KDE's RDP and VNC client, for a Plasma desktop shared with KRdp | Flatpak `org.kde.krdc`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
+| `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
 
 - **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
   distrobox. The first install also pulls the KDE runtime from Flathub, a few hundred MB, and
@@ -237,6 +238,12 @@ re-run updates. The header comment of each has the details and the uninstall ste
   screen, and KRDC gets a blank blue screen until someone answers it there.
 - **BSManager** runs the fork's own `install.sh` from its latest release, passing on
   `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
+- **Full Keyboard** is a separate app, not a replacement for the system keyboard: start it from
+  the dashboard's app launcher, with the VR session running. It types into the dashboard and
+  local apps, not into streamed VR games. The script checks the release archive against its
+  `SHA256SUMS` and runs the `install.sh` inside it, which keeps the previous release for rollback
+  and refuses one already installed, so a re-run with nothing newer just says so. Close the
+  keyboard before updating. `--uninstall` keeps the settings in `~/.config/framekeyboard`.
 - **`bin/bsmanager [--no-gpu] [HOST]`** shows the Frame's BSManager in a window on a Linux PC's
   Wayland desktop, through waypipe. In the headset, start BSManager from Steam instead. It runs in
   either of two places:
