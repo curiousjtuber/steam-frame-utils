@@ -9,6 +9,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `setup.sh` | checks and installs everything below but `apps/`, whose installers are run by hand (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
+| `install-waypipe.sh` | waypipe for the host from Arch Linux ARM's package, no root needed (see [The waypipe function](#the-waypipe-function)) |
 | `apps/` | installers for apps: Stream Frame, Moonlight, KRDC and BSManager (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
@@ -24,7 +25,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--brew] [--zsh] [--emacs] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--brew] [--zsh] [--emacs] [--waypipe[=arch|box]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -49,7 +50,7 @@ Options add the rest, and each one also fixes only what's missing:
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
 | `--emacs` | implies `--ubuntu`. emacs-pgtk, the Wayland build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. emacs-gtk, the X11 build that a plain `apt install emacs` picks, conflicts with it and is removed. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone |
-| `--waypipe` | implies `--ubuntu`. waypipe in the box, a copy of its binary in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [Shell init](#shell-init)) |
+| `--waypipe` | waypipe in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). `--waypipe=arch` runs `install-waypipe.sh`, Arch Linux ARM's package, when waypipe is missing; it doesn't update it, `install-waypipe.sh` does. `--waypipe=box` implies `--ubuntu`: a copy of the box's binary, which apt keeps up to date. The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` reuses it; the first time, with nothing installed yet, it asks |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
@@ -57,11 +58,12 @@ The rest of the setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
 What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--ubuntu`,
-`--emacs` and `--waypipe` in any box but `ubuntu`. From the host, the box's part of `--emacs` and
-`--waypipe` runs through `distrobox enter ubuntu`.
+`--emacs` and `--waypipe=box` in any box but `ubuntu`. From the host, the box's part of `--emacs`
+and `--waypipe=box` runs through `distrobox enter ubuntu`.
 
-Files are copied, not linked, so the Frame doesn't depend on this checkout staying where it is. A
-file that differs is moved to `<file>.bak-<timestamp>` first. Inserted text sits between
+Apart from `bin/`, which stays in the checkout and goes on `PATH` from there, files are copied, not
+linked, so they keep working if this checkout moves or goes. A file that differs is moved to
+`<file>.bak-<timestamp>` first. Inserted text sits between
 `# >>> steam-frame-utils: <name> >>>` and `# <<< … <<<` markers, and a re-run replaces it in place;
 edit the source here, not the copy. A shell-init file isn't inserted into an rc file that already
 defines the same alias or function some other way.
@@ -170,8 +172,8 @@ sudo at all.
 Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
 works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than the
 `ubuntu` box, which starts it in about half the time, and so does wl-clipboard, which SteamOS
-lacks. emacs-pgtk and waypipe stay in the box: Homebrew's emacs is terminal-only, and it has no
-waypipe.
+lacks. emacs-pgtk stays in the box, and waypipe comes from the box or Arch Linux ARM: Homebrew's
+emacs is terminal-only, and it has no waypipe.
 
 `shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes in
 the block at the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of
@@ -358,14 +360,33 @@ CLI has to run on the host.
 
 ### The waypipe function
 
-`waypipe` is a function around the real binary: the `ubuntu` box's `/usr/bin/waypipe`, which
-`--waypipe` also copies to `~/.local/bin` so the host can run it without entering the box. Game
-Mode is an X11 session: gamescope names its Wayland socket only in `GAMESCOPE_WAYLAND_DISPLAY`
-(`gamescope-0`), so a `waypipe` client started from a terminal there fails with `WAYLAND_DISPLAY is
-not set`. When `WAYLAND_DISPLAY` is empty, the function fills it in from
-`GAMESCOPE_WAYLAND_DISPLAY` for that one command. With that, `waypipe ssh <host> <app>` from a Game
-Mode Konsole shows a remote app on the Frame. The shell itself doesn't export it, because Qt and
-GTK apps started from that terminal would then leave Xwayland for native Wayland.
+SteamOS has no waypipe, and Valve's package repos for the Frame don't carry it, so `--waypipe` puts
+one in `~/.local/bin` from one of two sources:
+
+| Source | What |
+|---|---|
+| `--waypipe=arch` | [Arch Linux ARM](https://archlinuxarm.org)'s aarch64 package, through `install-waypipe.sh`: a 1.7 MB download, no distrobox needed, and usually the newer version (0.11.2 against the box's 0.11.0 at the time of writing). `setup.sh` runs it only when waypipe is missing; re-run `install-waypipe.sh` to update |
+| `--waypipe=box` | a copy of the `ubuntu` box's `/usr/bin/waypipe`, which apt keeps up to date; a re-run of `setup.sh --waypipe` refreshes the copy. Needs the box |
+
+Both binaries need only libc, libgcc, lz4 and zstd, which SteamOS has, so they run on the host
+without entering the box. `install-waypipe.sh` reads the version and checksum from the repo's
+package database over https, checks the download against it, and runs the new binary once before
+installing it, so that a build for a newer glibc than the Frame's leaves the installed one alone;
+the old binary is backed up to `waypipe.bak-<timestamp>`. The package signature isn't checked.
+
+The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` on
+a re-run keeps it, and neither source replaces the other's binary unasked. To switch, pass the
+other `=arch` or `=box` once. A waypipe installed by an earlier version of `setup.sh`, with no note
+yet, counts as the box's. With nothing installed and no note, a bare `--waypipe` asks, or stops
+when there's no terminal to ask on.
+
+`shell-init/waypipe.sh` wraps `waypipe` in a function. Game Mode is an X11 session: gamescope names
+its Wayland socket only in `GAMESCOPE_WAYLAND_DISPLAY` (`gamescope-0`), so a `waypipe` client
+started from a terminal there fails with `WAYLAND_DISPLAY is not set`. When `WAYLAND_DISPLAY` is
+empty, the function fills it in from `GAMESCOPE_WAYLAND_DISPLAY` for that one command. With that,
+`waypipe ssh <host> <app>` from a Game Mode Konsole shows a remote app on the Frame. The shell
+itself doesn't export it, because Qt and GTK apps started from that terminal would then leave
+Xwayland for native Wayland.
 
 ### Frametop terminals
 

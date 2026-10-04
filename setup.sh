@@ -2,8 +2,8 @@
 # Set up a Steam Frame's user environment from this repo, as the steamos user. Re-running it only
 # changes what is missing or out of date.
 #
-# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--ubuntu] [--emacs] [--waypipe]
-#                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--ubuntu] [--emacs]
+#                   [--waypipe[=arch|box]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
 # that finds bin/podman, the Desktop Mode cursor fix, and, in ~/.bashrc and ~/.zshrc, this
@@ -19,8 +19,13 @@
 #                   about 1.2 GB, and the box's first start takes several minutes.
 # --emacs           emacs-pgtk from the ubuntu box, replacing emacs-gtk, with emacs and emacsclient
 #                   exported to ~/.local/bin; implies --ubuntu
-# --waypipe         waypipe in the ubuntu box, a copy in ~/.local/bin for the host, and the Game
-#                   Mode waypipe function in ~/.bashrc and ~/.zshrc; implies --ubuntu
+# --waypipe         waypipe in ~/.local/bin for the host, from one of two sources, and the Game
+#                   Mode waypipe function in ~/.bashrc and ~/.zshrc. --waypipe=arch runs
+#                   install-waypipe.sh, Arch Linux ARM's package, when waypipe is missing; re-run
+#                   that script to update it. --waypipe=box takes a copy from the ubuntu box, which
+#                   apt keeps up to date; implies --ubuntu. The choice is kept in
+#                   ~/.local/state/steam-frame-utils/waypipe-source, so a bare --waypipe reuses
+#                   it; the first time, it asks.
 # --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
 #                   of the tailscale alias in ~/.bashrc and ~/.zshrc; uses sudo.
 #                   --tailscale=trust also puts tailscale0 in firewalld's trusted zone.
@@ -31,7 +36,7 @@
 #
 # The host and its distroboxes share the home directory, so it also runs inside a distrobox,
 # except for what needs the host: --tailscale, --brew and --zsh always, and --ubuntu, --emacs and
-# --waypipe from any box but ubuntu itself.
+# --waypipe=box from any box but ubuntu itself.
 #
 # bin/ goes on PATH from this checkout, for shells and for distrobox, so a git pull updates its
 # scripts; after moving the checkout, re-run this. Other files are copied, not linked, so they keep
@@ -55,6 +60,7 @@ IMAGE=quay.io/toolbx/ubuntu-toolbox:26.04
 IN_BOX_RUN=${SFU_IN_BOX:-}
 
 check=0 yes=0 want_brew=0 want_zsh=0 want_ubuntu=0 want_emacs=0 want_waypipe=0
+waypipe_src=
 tailscale=
 nerd_fonts=
 for arg in "$@"; do
@@ -65,7 +71,8 @@ for arg in "$@"; do
     --zsh) want_zsh=1 want_brew=1 ;;
     --ubuntu) want_ubuntu=1 ;;
     --emacs) want_emacs=1 want_ubuntu=1 ;;
-    --waypipe) want_waypipe=1 want_ubuntu=1 ;;
+    --waypipe) want_waypipe=1 ;;
+    --waypipe=arch|--waypipe=box) want_waypipe=1 waypipe_src=${arg#*=} ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
     --nerd-fonts) nerd_fonts=JetBrainsMono,NerdFontsSymbolsOnly ;;
@@ -184,13 +191,66 @@ if [[ $os != "steamos vr" || $(uname -m) != aarch64 ]]; then
   [[ ${FORCE:-} == 1 ]] || exit 1
 fi
 
+# --- Which waypipe: --waypipe[=arch|box] ----------------------------------------------------------
+# The source chosen once is kept, so that a bare --waypipe on a re-run doesn't ask again, and so
+# that the box's copy and Arch Linux ARM's don't replace each other.
+
+WAYPIPE=$HOME/.local/bin/waypipe
+WAYPIPE_SOURCE=$HOME/.local/state/steam-frame-utils/waypipe-source
+
+waypipe_source_kept() { [[ -f $WAYPIPE_SOURCE ]] && tr -d '[:space:]' < "$WAYPIPE_SOURCE" || true; }
+
+# remember_waypipe arch|box
+remember_waypipe() {
+  [[ $(waypipe_source_kept) == "$1" ]] && return 0
+  act "$WAYPIPE_SOURCE: $1" "note"
+  (( check )) && return 0
+  mkdir -p "${WAYPIPE_SOURCE%/*}"
+  echo "$1" > "$WAYPIPE_SOURCE"
+}
+
+ask_waypipe_source() {
+  (: </dev/tty) 2>/dev/null \
+    || die "--waypipe needs its source the first time: --waypipe=arch or --waypipe=box (see --help)"
+  cat >&2 <<EOF
+Where should waypipe come from?
+  arch  Arch Linux ARM's package, through install-waypipe.sh: a 1.7 MB download, no distrobox
+        needed, and usually the newer version. Re-run install-waypipe.sh to update it.
+  box   a copy of the ubuntu distrobox's /usr/bin/waypipe, which apt keeps up to date. Needs the
+        box, about 1.2 GB if it isn't there yet.
+EOF
+  local answer
+  read -r -p "arch or box? " answer </dev/tty \
+    || die "no answer; pass --waypipe=arch or --waypipe=box"
+  case $answer in
+    arch|box) waypipe_src=$answer ;;
+    *) die "answer arch or box, or pass --waypipe=arch or --waypipe=box" ;;
+  esac
+}
+
+if (( want_waypipe )) && [[ -z $waypipe_src ]]; then
+  kept=$(waypipe_source_kept)
+  if [[ $kept == arch || $kept == box ]]; then
+    waypipe_src=$kept
+  elif [[ -n $kept ]]; then
+    die "$WAYPIPE_SOURCE says '$kept'; it should say arch or box"
+  elif [[ -e $WAYPIPE ]]; then
+    # Earlier versions had the box as the only source, and kept no note.
+    waypipe_src=box
+  else
+    ask_waypipe_source
+  fi
+fi
+want_waypipe_box=0
+(( want_waypipe )) && [[ $waypipe_src == box ]] && want_waypipe_box=1 want_ubuntu=1
+
 if [[ -n $box ]]; then
   [[ -z $tailscale ]] || die "--tailscale needs the Frame's host; run it there, not in the $box box"
   (( ! want_brew )) \
     || die "--brew and --zsh need the Frame's host, since a distrobox doesn't see /home/linuxbrew;" \
       "run it there, not in the $box box"
   (( ! want_ubuntu )) || [[ $box == "$BOX" ]] \
-    || die "--ubuntu, --emacs and --waypipe need the host or the $BOX box, not the $box box"
+    || die "--ubuntu, --emacs and --waypipe=box need the host or the $BOX box, not the $box box"
 fi
 
 # bin/podman and distrobox's exports have to win even when the caller's PATH lacks them, as it
@@ -198,7 +258,7 @@ fi
 export PATH=$SRC/bin:$HOME/.local/bin:$PATH
 
 # --- Inside the ubuntu box ----------------------------------------------------------------------
-# The box's own part of --emacs and --waypipe: apt packages, and the exports into the shared
+# The box's own part of --emacs and --waypipe=box: apt packages, and the exports into the shared
 # ~/.local/bin. The host runs this through distrobox enter.
 
 apt_updated=0
@@ -237,13 +297,14 @@ in_box_part() {
     box_export emacs
     box_export emacsclient
   fi
-  if (( want_waypipe )); then
+  if (( want_waypipe_box )); then
     apt_ensure waypipe
     # The host runs a plain copy of the box's binary; its libraries are all on SteamOS too.
     if [[ -e /usr/bin/waypipe ]]; then
-      copy_file /usr/bin/waypipe "$HOME/.local/bin/waypipe" 0755 || true
+      copy_file /usr/bin/waypipe "$WAYPIPE" 0755 || true
+      remember_waypipe box
     else
-      act "$HOME/.local/bin/waypipe, from the $BOX box" "copy"
+      act "$WAYPIPE, from the $BOX box" "copy"
     fi
   fi
 }
@@ -329,6 +390,20 @@ if [[ -n $nerd_fonts ]]; then
   fi
 fi
 
+# --- waypipe from Arch Linux ARM: --waypipe=arch --------------------------------------------------
+# Only whether it is there, and from that source; updating needs the network and the repo's 10 MB
+# database, so it is left to install-waypipe.sh.
+
+if (( want_waypipe )) && [[ $waypipe_src == arch ]]; then
+  if [[ -x $WAYPIPE && $(waypipe_source_kept) == arch ]]; then
+    ver=$("$WAYPIPE" --version 2>/dev/null | sed -n '1s/^waypipe //p' || true)
+    say "ok" "waypipe${ver:+ $ver} from Arch Linux ARM"
+  else
+    act "waypipe from Arch Linux ARM into ~/.local/bin, via install-waypipe.sh" "install"
+    (( check )) || bash "$SRC/install-waypipe.sh"
+  fi
+fi
+
 # --- Homebrew: --brew, --zsh -------------------------------------------------------------------
 # The default prefix, since Homebrew's bottles are built for it; elsewhere everything builds from
 # source. /home survives SteamOS updates.
@@ -365,7 +440,7 @@ fi
 
 (( want_zsh )) && brew_ensure zsh
 
-# --- The ubuntu box: --ubuntu, --emacs, --waypipe -------------------------------------------------
+# --- The ubuntu box: --ubuntu, --emacs, --waypipe=box ---------------------------------------------
 
 confirm_box() {
   (( yes )) && return 0
@@ -396,14 +471,14 @@ if (( want_ubuntu )); then
     say "skip" "$BOX distrobox: not created"
   fi
 
-  if (( want_emacs || want_waypipe )); then
+  if (( want_emacs || want_waypipe_box )); then
     if [[ $box == "$BOX" ]]; then
       in_box_part
     elif (( have_box )); then
       args=()
       (( check )) && args+=(--check)
       (( want_emacs )) && args+=(--emacs)
-      (( want_waypipe )) && args+=(--waypipe)
+      (( want_waypipe_box )) && args+=(--waypipe=box)
       rc=0
       "$DISTROBOX" enter "$BOX" -- env SFU_IN_BOX=1 FORCE="${FORCE:-}" \
         bash "$SRC/setup.sh" "${args[@]}" || rc=$?
@@ -413,7 +488,7 @@ if (( want_ubuntu )); then
         *) die "the part inside the $BOX box failed (exit $rc)" ;;
       esac
     else
-      say "skip" "--emacs/--waypipe inside the $BOX box: it doesn't exist yet"
+      say "skip" "--emacs/--waypipe=box inside the $BOX box: it doesn't exist yet"
     fi
   fi
 fi
