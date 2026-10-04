@@ -17,6 +17,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
+| `docs/` | notes on what was looked at and why it went the way it did, such as [Arch-based distrobox images](docs/arch-distrobox-images.md) |
 
 ## Setup
 
@@ -389,6 +390,8 @@ without entering the box. `install-waypipe.sh` reads the version and checksum fr
 package database over https, checks the download against it, and runs the new binary once before
 installing it, so that a build for a newer glibc than the Frame's leaves the installed one alone;
 the old binary is backed up to `waypipe.bak-<timestamp>`. The package signature isn't checked.
+An Arch-based box, closer to SteamOS than Ubuntu's, was looked at and adds nothing for waypipe;
+see [docs/arch-distrobox-images.md](docs/arch-distrobox-images.md).
 
 The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` on
 a re-run keeps it, and neither source replaces the other's binary unasked. To switch, pass the
