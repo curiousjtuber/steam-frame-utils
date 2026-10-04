@@ -426,7 +426,9 @@ passes through untouched everywhere else. Without it, from Frametop's desktop `d
 fails with `crun: error opening file /run/user/1000/frametop/crun/<id>/status`. distrobox still
 forwards the Desktop Mode environment into the container, so GUI apps there reach the nested
 Plasma's `wayland-0`, X display and session bus. It is found from this checkout, whose `bin/`
-comes before `/usr/bin` in `PATH`.
+comes before `/usr/bin` in `PATH`. Inside a distrobox, which has the same `PATH` but no podman of
+its own, it hands over to the host's podman through `distrobox-host-exec`, so `podman ps` works
+there too.
 
 ### `~/.distroboxrc`
 

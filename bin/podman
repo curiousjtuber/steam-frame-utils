@@ -2,6 +2,12 @@
 # steam-frame-utils: podman with the real runtime dir and user bus, from
 # nested desktops (Desktop Mode, Frametop) that have their own. Details:
 # https://github.com/curiousjtuber/steam-frame-utils#distrobox-in-desktop-mode
+
+# A distrobox has no podman of its own, but this on its PATH: hand over to the host's.
+if [ -n "${CONTAINER_ID:-}" ] || [ -e /run/.containerenv ]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
 uid=$(id -u)
 case "$XDG_RUNTIME_DIR" in
   /run/user/"$uid"/*)
