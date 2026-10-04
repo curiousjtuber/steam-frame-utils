@@ -17,6 +17,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
+| `docs/` | memos on the surrounding ground, such as [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) |
 
 ## Setup
 
