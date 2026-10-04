@@ -2,6 +2,6 @@
 # Inserted by setup.sh from distrobox/distroboxrc; edit that and re-run it.
 # Details: https://github.com/curiousjtuber/steam-frame-utils#distroboxrc
 case $PATH in
-  "$HOME/.local/bin:"*) ;;
-  *) PATH=$HOME/.local/bin:$PATH ;;
+  "@SRC@/bin:"*) ;;
+  *) PATH="@SRC@/bin:$PATH" ;;
 esac

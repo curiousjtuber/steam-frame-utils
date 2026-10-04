@@ -10,7 +10,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `apps/` | installers for apps: Stream Frame, Moonlight, KRDC and BSManager (see [Apps](#apps)) |
-| `shell-init/` | bash and zsh init for Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
+| `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/frame-prox` | the proximity sensor's readings and threshold, and the setting that moves it (see [Proximity sensor](#proximity-sensor)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
@@ -35,9 +35,8 @@ With no options:
 |---|---|
 | `~/.local/bin` first in `PATH` | adds `export PATH=~/.local/bin:$PATH` to `~/.bashrc` and `~/.profile`, unless a line there already puts `~/.local/bin` on `PATH` |
 | distrobox | installs into `~/.local` if `~/.local/bin/distrobox` is missing |
-| `bin/podman` | copies to `~/.local/bin/podman` |
-| `distrobox/distroboxrc` | inserts into `~/.distroboxrc` |
-| `bin/frame-prox` | copies to `~/.local/bin` |
+| `distrobox/distroboxrc` | inserts into `~/.distroboxrc`, which puts this checkout's `bin/` first for distrobox |
+| `bin/` | goes on `PATH` from this checkout, through `shell-init/bin.sh` (see [Shell init](#shell-init)), so a `git pull` updates its scripts. A copy in `~/.local/bin` from an earlier version would come first, so it is backed up to `<file>.bak-<timestamp>` |
 | `shell-init/frametop.sh` | inserts into the block at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
 
@@ -315,8 +314,14 @@ only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factor
 
 | Block | Files |
 |---|---|
-| `top`, at the start of the file | `brew.sh` with `--brew` (see [Homebrew](#homebrew)), and `frametop.sh` always |
+| `top`, at the start of the file | `brew.sh` with `--brew` (see [Homebrew](#homebrew)), and `frametop.sh` and `bin.sh` always |
 | `end`, at the end of the file | `waypipe.sh` with `--waypipe`, and `tailscale.sh` with `--tailscale` |
+
+`bin.sh` puts this checkout's `bin/` on `PATH`, ahead of Homebrew and behind `~/.local/bin`, which
+the rc file puts first further down. distrobox puts it first too, through
+[`~/.distroboxrc`](#distroboxrc). Its path is filled in from where `setup.sh` runs, so the
+checkout can be anywhere, and after moving it, run `setup.sh` again. `setup.sh` refuses a path
+with `"`, `$`, `` ` ``, `\`, `|` or `&` in it.
 
 A file stays in once it's there, so a run without its option keeps it. An rc file with blocks of
 earlier versions, one per file, gets its files moved into these two.
@@ -385,16 +390,18 @@ runtime dir nested in `/run/user/<uid>`, such as `nested_plasma` or Frametop's `
 passes through untouched everywhere else. Without it, from Frametop's desktop `distrobox enter`
 fails with `crun: error opening file /run/user/1000/frametop/crun/<id>/status`. distrobox still
 forwards the Desktop Mode environment into the container, so GUI apps there reach the nested
-Plasma's `wayland-0`, X display and session bus. `setup.sh` copies it to `~/.local/bin`, which
+Plasma's `wayland-0`, X display and session bus. It is found from this checkout, whose `bin/`
 comes before `/usr/bin` in `PATH`.
 
 ### `~/.distroboxrc`
 
-`~/.local/bin` comes first once an rc file has run, but not for a distrobox export started
-without one, such as `~/.local/bin/emacs` from a launcher: the Frametop desktop's `PATH` doesn't
-have `~/.local/bin`, so the export's `distrobox-enter` finds `/usr/bin/podman` and fails with the
-crun error above. distrobox sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a block there
-(`distrobox/distroboxrc`) that moves `~/.local/bin` to the front of `PATH` for distrobox alone.
+The checkout's `bin/` is on `PATH` once an rc file has run, but not for a distrobox export
+started without one, such as `~/.local/bin/emacs` from a launcher. The export runs
+`distrobox-enter` by its full path, which then finds `/usr/bin/podman` and fails with the crun
+error above. distrobox sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a
+block there (`distrobox/distroboxrc`) that moves `bin/` to the front of `PATH` for distrobox alone.
+An earlier version copied `bin/podman` to `~/.local/bin` instead, and `setup.sh` backs up that
+copy out of the way.
 
 ## Mouse cursor in Desktop Mode
 

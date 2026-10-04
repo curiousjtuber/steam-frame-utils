@@ -5,9 +5,9 @@
 # Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--ubuntu] [--emacs] [--waypipe]
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
-# With no options it puts ~/.local/bin on PATH, and installs distrobox, bin/podman (with its
-# ~/.distroboxrc block), frame-prox, the Desktop Mode cursor fix, and the Frametop desktop
-# terminal fix in ~/.bashrc and ~/.zshrc.
+# With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
+# that finds bin/podman, the Desktop Mode cursor fix, and, in ~/.bashrc and ~/.zshrc, this
+# checkout's bin/ on PATH and the Frametop desktop terminal fix.
 #
 # --check           report what would change, and change nothing
 # --yes             create the ubuntu box without asking first
@@ -33,14 +33,21 @@
 # except for what needs the host: --tailscale, --brew and --zsh always, and --ubuntu, --emacs and
 # --waypipe from any box but ubuntu itself.
 #
-# Files are copied, not linked, so the Frame keeps working if this checkout moves or is deleted.
-# A file that differs is backed up to <file>.bak-<timestamp> before it is replaced. Text inserted
-# into shared files sits between "# >>> steam-frame-utils: <name> >>>" markers, and a later run
-# replaces the block in place.
+# bin/ goes on PATH from this checkout, for shells and for distrobox, so a git pull updates its
+# scripts; after moving the checkout, re-run this. Other files are copied, not linked, so they keep
+# working if it moves or is deleted. A file that differs is backed up to <file>.bak-<timestamp>
+# before it is replaced. Text inserted into shared files sits between
+# "# >>> steam-frame-utils: <name> >>>" markers, and a later run replaces the block in place.
 
 set -euo pipefail
 
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# The rc files get its path inside double quotes, and with_src passes it through sed.
+case $SRC in
+  *[\"\$\`\\\|\&]*)
+    echo "setup.sh: can't put $SRC on PATH: move the checkout to a path without \" \$ \` \\ | or &" >&2
+    exit 1 ;;
+esac
 STAMP=$(date +%Y%m%d-%H%M%S)
 BOX=ubuntu
 IMAGE=quay.io/toolbx/ubuntu-toolbox:26.04
@@ -135,6 +142,9 @@ ensure_block() {
   fi
 }
 
+# with_src FILE -- FILE with @SRC@ as this checkout, written with $HOME when it is under it
+with_src() { sed "s|@SRC@|${SRC/#$HOME/\$HOME}|g" "$1"; }
+
 # block_lines FILE in|out -- FILE's lines inside, or outside, its steam-frame-utils blocks
 block_lines() {
   awk -v want="$2" '
@@ -183,9 +193,9 @@ if [[ -n $box ]]; then
     || die "--ubuntu, --emacs and --waypipe need the host or the $BOX box, not the $box box"
 fi
 
-# bin/podman and distrobox's exports have to win even when the caller's PATH lacks ~/.local/bin,
-# as it can on a first run in Desktop Mode.
-export PATH=$HOME/.local/bin:$PATH
+# bin/podman and distrobox's exports have to win even when the caller's PATH lacks them, as it
+# can on a first run in Desktop Mode.
+export PATH=$SRC/bin:$HOME/.local/bin:$PATH
 
 # --- Inside the ubuntu box ----------------------------------------------------------------------
 # The box's own part of --emacs and --waypipe: apt packages, and the exports into the shared
@@ -246,7 +256,7 @@ if [[ -n $IN_BOX_RUN ]]; then
 fi
 
 # --- ~/.local/bin on PATH -------------------------------------------------------------------------
-# distrobox, its exports and bin/podman live there, and podman has to win over /usr/bin/podman.
+# distrobox and its exports live there.
 # Any line that already puts it on PATH counts, however it spells the home directory.
 
 for rc in "$HOME/.bashrc" "$HOME/.profile"; do
@@ -270,14 +280,29 @@ else
 fi
 
 # --- bin/podman: distrobox from Desktop Mode --------------------------------------------------------
+# distrobox has to find it even where the caller's PATH doesn't have bin/, as for an export started
+# from a launcher.
 
-copy_file "$SRC/bin/podman" "$HOME/.local/bin/podman" 0755 || true
-# distrobox has to find it even where the caller's PATH doesn't have ~/.local/bin first.
-ensure_block "$HOME/.distroboxrc" podman "$SRC/distrobox/distroboxrc"
+content=$(mktemp)
+with_src "$SRC/distrobox/distroboxrc" > "$content"
+ensure_block "$HOME/.distroboxrc" podman "$content"
+command rm -f "$content"
 
-# --- frame-prox: the proximity sensor -----------------------------------------------------------
+# --- Copies of bin/ from earlier versions ---------------------------------------------------------
+# ~/.local/bin comes first in PATH, so an old copy would hide the checkout's script. It is backed
+# up rather than deleted, in case it was edited by hand.
 
-copy_file "$SRC/bin/frame-prox" "$HOME/.local/bin/frame-prox" 0755 || true
+for src in "$SRC"/bin/*; do
+  name=${src##*/}
+  old=$HOME/.local/bin/$name
+  [[ -f $old && ! -L $old ]] || continue
+  if sed -n 2p "$old" | grep -q '^# steam-frame-utils:'; then
+    act "$old -> $old.bak-$STAMP, an earlier version's copy of bin/$name" "back up"
+    (( check )) || command mv -f "$old" "$old.bak-$STAMP"
+  else
+    say "skip" "$old isn't from steam-frame-utils, and hides bin/$name; left alone"
+  fi
+done
 
 # --- Mouse cursor in Desktop Mode ---------------------------------------------------------------
 
@@ -465,8 +490,11 @@ fi
 # defines outside the blocks is left out. Blocks of earlier versions, one per file, are removed.
 
 INIT_LINK='# https://github.com/curiousjtuber/steam-frame-utils#shell-init'
+# bin's pattern names this checkout's directory, so that some other bin/ on PATH doesn't match.
+src_re=$(printf '%s' "${SRC##*/}" | sed 's/[][\\.*^$+?(){}|]/\\&/g')
 declare -A INIT_PATTERNS=(
   [frametop]='^[[:space:]]*export FRAMETOP_XDG_CONFIG_HOME='
+  [bin]="^[^#]*PATH=.*$src_re/bin"
   [brew]='^[^#]*brew shellenv'
   [waypipe]='^[[:space:]]*(function[[:space:]]+waypipe|waypipe[[:space:]]*\(\))'
   [tailscale]='^[[:space:]]*alias tailscale='
@@ -496,7 +524,7 @@ init_block() {
   {
     printf '%s\n' "$INIT_LINK"
     for init in "${inits[@]}"; do
-      cat "$SRC/shell-init/$init.sh"
+      with_src "$SRC/shell-init/$init.sh"
     done
   } > "$content"
   ensure_block "$rc" "$name" "$content" "$where"
@@ -518,8 +546,9 @@ fi
 want_ts_init=0
 [[ -z $box && -n $tailscale ]] && want_ts_init=1
 for rc in "${rcs[@]}"; do
-  # frametop is a no-op outside a Frametop desktop's terminal, so it always goes in.
-  init_block "$rc" top top brew "$want_brew" frametop 1
+  # frametop is a no-op outside a Frametop desktop's terminal, so it always goes in. bin comes
+  # after brew, to go ahead of it in PATH; ~/.local/bin, added further down, goes ahead of both.
+  init_block "$rc" top top brew "$want_brew" frametop 1 bin 1
   init_block "$rc" end end waypipe "$want_waypipe" tailscale "$want_ts_init"
   if [[ -f $rc ]]; then
     for old in $(sed -n 's/^# >>> steam-frame-utils: \(.*\) >>>$/\1/p' "$rc"); do
