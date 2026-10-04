@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# steam-frame-utils: BSManager on the Frame, in a window on a Linux PC's Wayland desktop, through
+# waypipe. Run it on the Frame in a `waypipe ssh` session from the PC, or on the PC itself, where
+# it opens that session. In the headset, start BSManager from Steam instead. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#apps
+#
+# Usage:  bsmanager [--no-gpu] [HOST] [-- BSMANAGER-ARGS...]
+#
+# HOST, on the PC only, defaults to $FRAME_HOST, then steamos@frame.local. --no-gpu turns off
+# BSManager's GPU rendering and, on the PC, sends the window as plain pixels instead of GPU
+# buffers, for a blank or crashing window; in a session opened by hand, pass waypipe -n for that.
+#
+# The PC needs waypipe; the Frame needs `setup.sh --waypipe` and apps/install-bsmanager.sh.
+
+set -euo pipefail
+
+# A non-interactive SSH shell on the Frame lacks ~/.local/bin on PATH, and a ~ here would expand
+# on the PC.
+REMOTE_WAYPIPE=/home/steamos/.local/bin/waypipe
+APPIMAGE=/home/steamos/Applications/BSManager.AppImage
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "bsmanager: $*" >&2; exit 1; }
+
+in_box() { [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; }
+
+# The same test as setup.sh's: SteamOS's vr variant, on arm64.
+on_frame() {
+  local osrel=/etc/os-release
+  in_box && osrel=/run/host/etc/os-release
+  [[ $(. "$osrel" 2>/dev/null; echo "${ID:-} ${VARIANT_ID:-}") == "steamos vr" \
+    && $(uname -m) == aarch64 ]]
+}
+
+frame=0
+if on_frame; then
+  # AppImages mount themselves with FUSE, which a distrobox may lack. distrobox-host-exec drops
+  # WAYLAND_DISPLAY, which points at the waypipe session.
+  in_box && exec distrobox-host-exec env ${WAYLAND_DISPLAY:+"WAYLAND_DISPLAY=$WAYLAND_DISPLAY"} \
+    "$0" "$@"
+  frame=1
+fi
+
+host=${FRAME_HOST:-steamos@frame.local} host_given=0
+waypipe_args=() app_args=(--no-sandbox)
+while (( $# )); do
+  case $1 in
+    -n|--no-gpu) waypipe_args+=(--no-gpu) app_args+=(--disable-gpu) ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; app_args+=("$@"); break ;;
+    -*) usage >&2; exit 2 ;;
+    *) host=$1 host_given=1 ;;
+  esac
+  shift
+done
+
+# BSManager allows one instance: a second hands off to the first and exits, with no new window.
+RUNNING='^/tmp/[.]mount_BSMan[^/]*/bs-manager'
+# This BSManager's Electron picks X11 by default, and a waypipe session has only Wayland.
+app_args=(--ozone-platform=wayland "${app_args[@]}")
+
+if (( frame )); then
+  (( ! host_given )) || die "HOST is for the PC; on the Frame it runs BSManager here"
+  [[ -n ${WAYLAND_DISPLAY:-} ]] \
+    || die "WAYLAND_DISPLAY is not set; run it in a waypipe ssh session from the PC"
+  [[ -x $APPIMAGE ]] || die "no $APPIMAGE; install it with apps/install-bsmanager.sh"
+  ! pgrep -f "$RUNNING" >/dev/null \
+    || die "BSManager is already running, in the window it was started in; quit it first"
+  exec "$APPIMAGE" "${app_args[@]}"
+fi
+
+command -v waypipe >/dev/null || die "missing required command: waypipe"
+[[ -n ${WAYLAND_DISPLAY:-} ]] || die "WAYLAND_DISPLAY is not set; run it from a Wayland desktop"
+
+if ssh "$host" pgrep -f "'$RUNNING'" >/dev/null; then
+  die "BSManager is already running on $host, in the window it was started in; quit it first"
+fi
+
+exec waypipe "${waypipe_args[@]}" --remote-bin "$REMOTE_WAYPIPE" ssh "$host" \
+  "$APPIMAGE" "${app_args[@]}"

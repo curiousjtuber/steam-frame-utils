@@ -13,6 +13,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/frame-prox` | the proximity sensor's readings and threshold, and the setting that moves it (see [Proximity sensor](#proximity-sensor)) |
+| `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 
@@ -232,6 +233,19 @@ re-run updates. The header comment of each has the details and the uninstall ste
   screen, and KRDC gets a blank blue screen until someone answers it there.
 - **BSManager** runs the fork's own `install.sh` from its latest release, passing on
   `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
+- **`bin/bsmanager [--no-gpu] [HOST]`** shows the Frame's BSManager in a window on a Linux PC's
+  Wayland desktop, through waypipe. In the headset, start BSManager from Steam instead. It runs in
+  either of two places:
+  - On the Frame, where `setup.sh` puts it on `PATH`, in a session opened from the PC with
+    `waypipe --remote-bin /home/steamos/.local/bin/waypipe ssh steamos@frame.local`. From a
+    distrobox it runs on the host, and it refuses without the session's `WAYLAND_DISPLAY`.
+  - On the PC, copied there, where it opens that session itself. HOST defaults to `$FRAME_HOST`,
+    or else `steamos@frame.local`.
+
+  The Frame needs `setup.sh --waypipe`. BSManager allows one instance, so the script stops if it's
+  already running on the Frame: a second launch would hand off to the first and exit, and no
+  window would show on the PC. `--no-gpu` is for a blank or crashing window; in a session opened
+  by hand, also pass `-n` to waypipe.
 
 ## Proximity sensor
 
