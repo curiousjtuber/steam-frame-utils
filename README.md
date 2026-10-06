@@ -262,8 +262,9 @@ re-run updates. The header comment of each has the details and the uninstall ste
 
 A proximity sensor, a Vishay VCNL4040 (the kernel's `vcnl4000` IIO driver), tells SteamVR whether
 the Frame is worn; `steamvr-proxmicmute.service`, for one, mutes the microphone when it isn't. If
-SteamVR keeps losing you while you wear it, its threshold is too high for your face and fit, and
-**`driver_cv.proxSensorThresholdMultipleConst`** is the setting that lowers it.
+SteamVR keeps losing you while you wear it, its threshold is too high for your face and fit. Since
+SteamOS 0.4.4, **VR Settings > Startup / Shutdown > Presence Sensor** has a **High Sensitivity**
+option that lowers it; `frame-prox --set high` sets the same thing from a shell.
 
 ```bash
 frame-prox
@@ -274,38 +275,41 @@ frame-prox --watch
 ```
 
 ```bash
-frame-prox --set 1.0
+frame-prox --set high
 ```
 
-The first prints a reading, the factory calibration, the settings, and the threshold SteamVR uses;
-`--watch` prints a reading every 0.3 seconds against that threshold. A higher reading is closer.
-`--set` changes the multiplier, and with it the threshold.
+The first prints a reading, the factory calibration, the Presence Sensor setting, and the threshold
+SteamVR works out from them; `--watch` prints a reading every 0.3 seconds against that threshold,
+with the state SteamVR should be reporting. A higher reading is closer. `--set normal` goes back
+to the default.
 
-- **The threshold comes from SteamVR's `cv` driver,** not the kernel. At startup it reads two
-  factory values from the headset's EEPROM, `prox_far` and `prox_noise`, and works out a
-  threshold and a noise adjustment from them and the `driver_cv` settings
-  `proxSensorThresholdMultipleConst` and `proxSensorNoiseExponentConst`. Their defaults, 1.4 and
-  0.85, are in `/opt/steamvr/drivers/frame_hmd/resources/frame_hmd_additional.vrsettings`. It logs
-  both results to `vrserver.txt`, which is where `frame-prox` gets them.
-- **The formula isn't documented,** but one Frame's numbers fit (`prox_far` − `prox_noise`) ×
-  multiplier for the threshold, and `prox_noise` ^ exponent for the noise adjustment. With
-  `prox_far` 17 and `prox_noise` 5, the default gave a threshold of 16.8 and an adjustment of 3.93.
-  Worn, that Frame read 19.2 to 19.6, and SteamVR lost it now and then. How the driver applies
-  the noise adjustment isn't logged, so `--watch` shows the reading's margin over the threshold
-  both without it (`-threshold`) and with it subtracted too (`-noise-threshold`).
-- **A lower multiplier detects you from further away.** 1.0 gave that Frame a threshold of 12,
-  with readings of about 4.5 off the face, and fixed it. Put the headset on and check that
-  `--watch` stays above the new threshold, and take it off and check that it drops well below.
-- **`--set` goes through `vrcmd --set-settings-float`,** and needs SteamVR running. The driver
-  takes the change at once, and vrserver saves it to your `steamvr.vrsettings` (in
-  `~/.config/openvr/config`), where it outlasts SteamVR updates. Editing that file by hand while
-  SteamVR runs doesn't stick, since vrserver writes back the settings it holds on its next change.
-  Stopping `steamvr.service` to edit it isn't safe either: the gamescope session stops with it and
-  starts it again straight away.
-- **To go back to the default,** `frame-prox --set 1.4`. The key stays in your file, though, so it
-  won't follow a later change of the default in a SteamVR update. To remove it, delete it from
-  `steamvr.vrsettings` while SteamVR is stopped (`sudo steamvr stop`, then `sudo steamvr start`,
-  which stop and start the whole session).
+- **The threshold comes from SteamVR's `cv` driver,** not the kernel. At startup it reads one
+  factory value from the headset's EEPROM, `prox_far`, and logs it to `vrserver.txt`
+  (`Proximity sensing enable: proxfar 17`). Then it reads `in_proximity_raw` itself and reports
+  "worn" while the reading is above `prox_far` × 0.8 (Normal) or `prox_far` × 0.65 (High
+  Sensitivity). With `prox_far` 17 that is 13.6 or 11.05. The code has no hysteresis.
+- **The setting is `steamvr.proxThresholdMode`,** an integer: 0 is Normal, the default in
+  `/opt/steamvr/resources/settings/default.vrsettings`, 1 is High Sensitivity, and anything else
+  counts as 0. It isn't documented either; the settings UI sets it through the same path, and the
+  driver reads it again on every settings change.
+- **Worn, one Frame read 19.2 to 19.6** and about 4.5 off the face. 0.4.4's Normal threshold
+  on that Frame, 13.6, is already below the 16.8 of 0.4.1 to 0.4.3's default, and High
+  Sensitivity, 11.05, is about where the old `--set 1.0` put it (12). Put the headset on and check
+  that `--watch` says worn, and take it off and check that it drops well below.
+- **`--set` goes through `vrcmd --set-settings-int`,** and needs SteamVR running. vrserver saves
+  it to your `steamvr.vrsettings` (in `~/.config/openvr/config`), where it outlasts SteamVR
+  updates. Editing that file by hand while SteamVR runs doesn't stick, since vrserver writes back
+  the settings it holds on its next change. Stopping `steamvr.service` to edit it isn't safe
+  either: the gamescope session stops with it and starts it again straight away.
+- **Before 0.4.4,** the threshold was (`prox_far` − `prox_noise`) times
+  `driver_cv.proxSensorThresholdMultipleConst`, default 1.4, with a noise adjustment from
+  `proxSensorNoiseExponentConst`, and the driver logged the result to `vrserver.txt`. 0.4.4's
+  `driver_cv.so` dropped both keys, the `prox_noise` read and the log line, which is why the old
+  `frame-prox` stopped finding a threshold. A multiplier you set then is still in
+  `steamvr.vrsettings` and ignored; `frame-prox` points it out. To remove it, delete it from the
+  file while SteamVR is stopped (`sudo steamvr stop`, then `sudo steamvr start`, which stop and
+  start the whole session). The dead defaults are still listed in
+  `/opt/steamvr/drivers/frame_hmd/resources/frame_hmd_additional.vrsettings`.
 - **`driver_cv.disableProxSensor`** turns detection off altogether:
   `steamvr cmd --set-settings-bool driver_cv.disableProxSensor true`.
 - **The kernel's `in_proximity_nearlevel` and threshold events** under
@@ -315,22 +319,30 @@ The first prints a reading, the factory calibration, the settings, and the thres
 
 ### How the key was found
 
-None of this is documented. OpenVR's `openvr.h` names the core settings keys but not any driver's
-own, such as `driver_cv`'s, and SteamVR's settings UI doesn't show them. Valve's SteamOS 0.4.1
-notes say only that the "proximity sensor detection model" improved. If an update renames the key
-or moves the logic, and `frame-prox` stops finding a threshold, the same steps should find the
-replacement:
+None of this is documented. OpenVR's `openvr.h` names the core settings keys but not these, and
+Valve's notes say only that 0.4.1 improved the "proximity sensor detection model" and 0.4.4
+"added user setting to control Presence Sensor Sensitivity". If an update renames the key or
+changes the constants, and `frame-prox` is wrong again, the same steps should find the replacement:
 
-- **The settings:** `grep -ril --include='*.vrsettings' prox /opt/steamvr` finds them in one
-  file, `drivers/frame_hmd/resources/frame_hmd_additional.vrsettings`, as bare JSON values.
-- **What reads them:** `strings` on `/opt/steamvr/drivers/cv/bin/linuxarm64/driver_cv.so` shows
-  the key names, the `eeprom_console get prox_far` and `get prox_noise` calls, and the message it
-  logs to `vrserver.txt` with the threshold.
-- **The proof:** changing the multiplier with `vrcmd` and watching that message.
+- **The settings:** `grep -ril --include='*.vrsettings' prox /opt/steamvr` finds the key, with
+  its default, in `resources/settings/default.vrsettings`, and the UI's words for its values in
+  `resources/webinterface/dashboard/localization/vrmonitor_english.json`
+  (`Settings_PresenceSensor_*`). The dashboard's JavaScript maps the words to the numbers
+  (`Default=0`, `Sensitive=1`).
+- **What reads them:** `strings -t x` on `/opt/steamvr/drivers/cv/bin/linuxarm64/driver_cv.so`
+  shows the key, the `eeprom_console get prox_far` and `vrdevice_path prox_sensor` commands it
+  runs (the second prints the sysfs path of the sensor), and the message it logs.
+- **The constants:** 0.4.4 no longer logs the threshold, so they came from the disassembly
+  (`llvm-objdump -d driver_cv.so`). The code that references the log message's address is the
+  one that reads `prox_far`; a little before it, after the `sscanf("%f")` of the sensor file, the
+  mode is compared with 1 and `prox_far` is converted to float and multiplied by `0x3f4ccccd`
+  (0.8) or `0x3f266666` (0.65), compared with the reading, and the result sent to
+  `UpdateBooleanComponent` for the `/proximity` input.
 
-`/usr/lib/deckard-eeprom/eeprom_console` also holds `prox_near` and `prox_mid` (564 and 91 on that
-Frame), apparently factory readings at closer distances; `driver_cv.so` doesn't use them. Use
-only its `get` command: `reset`, `lock`, `unlock` and `upgrade` write the factory EEPROM.
+`/usr/lib/deckard-eeprom/eeprom_console` also holds `prox_noise`, `prox_near` and `prox_mid` (5,
+564 and 91 on that Frame), apparently factory readings at closer distances; 0.4.4's
+`driver_cv.so` doesn't use them. Use only its `get` command: `reset`, `lock`, `unlock` and
+`upgrade` write the factory EEPROM.
 
 ## Shell init
 
