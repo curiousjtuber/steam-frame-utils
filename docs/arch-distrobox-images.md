@@ -2,9 +2,9 @@
 
 SteamOS is Arch-based, so a distrobox on the same base would share the Frame's package versions and
 library ABI: a binary built or installed in it is the host's own kind of build, and pacman and the
-AUR work as on any Arch. The `ubuntu` box exists because, when the Frame was set up, no Arch-based
-arm64 image looked solid enough to build on. This is a memo of what is out there, checked against
-the registries on 2026-10-03, build dates re-read on 2026-10-06.
+AUR work as on any Arch. `setup.sh` used an `ubuntu` box until 2026-10-06 because, when the Frame
+was set up, no Arch-based arm64 image looked solid enough to build on. This is a memo of what is
+out there, checked against the registries on 2026-10-03, build dates re-read on 2026-10-06.
 
 ## Images
 
@@ -22,21 +22,26 @@ from having used the image, not re-checked.
 
 ## Using one
 
+`setup.sh --arch` creates the `arch` box from `menci/archlinuxarm`, with the pacman fix below
+applied through `--pre-init-hooks`, so it comes up first try. By hand that is:
+
 ```bash
-distrobox create --name arch --image docker.io/lopsided/archlinux:latest
+distrobox create --name arch --image docker.io/menci/archlinuxarm:latest \
+  --pre-init-hooks "sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf"
 ```
 
 The first `distrobox enter` runs `distrobox-init`, which installs distrobox's own dependencies with
-pacman; the toolbx images (`quay.io/toolbx/*`) come with those already, which is why the `ubuntu`
-box starts faster the first time.
+pacman; the toolbx images (`quay.io/toolbx/*`) come with those already, which is why a toolbx box
+starts faster the first time.
 
 **On the Frame the first enter of an Arch Linux ARM box fails** with `restricting filesystem
 access failed because Landlock is not supported by the kernel`. pacman 7 runs its downloads in a
 Landlock sandbox and the Frame kernel is built without it (`CONFIG_SECURITY_LANDLOCK is not set` in
 `/proc/config.gz`). pacman 7.0 falls back silently, which is why the holo box (pacman 7.0.0, Valve's
 build) came up without trouble; ALARM's pacman 7.1.0 treats it as fatal, so `distrobox-init`'s
-`pacman -Syy` dies and the container exits before it can be entered. Turn the sandbox off in the
-stopped container's `pacman.conf`, then enter again:
+`pacman -Syy` dies and the container exits before it can be entered. The `--pre-init-hooks` above
+runs before that first pacman, which is the fix for a new box. For one already created without
+it, turn the sandbox off in the stopped container's `pacman.conf`, then enter again:
 
 ```bash
 podman unshare sh -c 'm=$(podman mount arch) && sed -i "s/^#DisableSandbox/DisableSandbox/" "$m/etc/pacman.conf"; podman umount arch'

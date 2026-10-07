@@ -6,8 +6,8 @@
 # SteamOS has no waypipe, and Valve's package repos for the Frame don't carry it. Arch Linux ARM's
 # aarch64 build needs only libc, libgcc, lz4 and zstd, all of which SteamOS has, so the binary
 # alone goes in ~/.local/bin: no root, and SteamOS updates keep it. `setup.sh --waypipe=arch` runs
-# this when waypipe is missing; `setup.sh --waypipe=box` takes a copy from the ubuntu distrobox
-# instead. See README.md#the-waypipe-function.
+# this when waypipe is missing; `setup.sh --waypipe=box` takes a copy from the arch distrobox,
+# the same package, instead. See README.md#the-waypipe-function.
 #
 # The version and checksum come from the repo's package database, about 10 MB, over https from one
 # mirror (ALARM_MIRROR overrides it). The package is downloaded when the installed version differs

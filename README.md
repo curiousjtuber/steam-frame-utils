@@ -49,18 +49,18 @@ Options add the rest, and each one also fixes only what's missing:
 |---|---|
 | `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` in the block at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
-| `--ubuntu` | creates the `ubuntu` distrobox from `quay.io/toolbx/ubuntu-toolbox:26.04` if it doesn't exist. The image is about 1.2 GB and the first start takes several minutes, so it says so and asks first; `--yes` skips the question |
-| `--emacs` | implies `--ubuntu`. emacs-pgtk, the Wayland build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. emacs-gtk, the X11 build that a plain `apt install emacs` picks, conflicts with it and is removed. apt's recommended mailutils is left out, since it brings postfix along. An existing export from another box is left alone |
-| `--waypipe` | waypipe in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). `--waypipe=arch` runs `install-waypipe.sh`, Arch Linux ARM's package, when waypipe is missing; it doesn't update it, `install-waypipe.sh` does. `--waypipe=box` implies `--ubuntu`: a copy of the box's binary, which apt keeps up to date. The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` reuses it; the first time, with nothing installed yet, it asks |
+| `--arch` | creates the `arch` distrobox from `docker.io/menci/archlinuxarm:latest`, Arch Linux ARM, if it doesn't exist (see [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) for why that image, and for the pacman sandbox the box is created without). The image is about 0.7 GB and the first start takes a few minutes, so it says so and asks first; `--yes` skips the question |
+| `--emacs` | implies `--arch`. emacs-wayland, the pgtk build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. An export left by another box, as the earlier `ubuntu` box's, is replaced; anything else already there is left alone |
+| `--waypipe` | waypipe in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). `--waypipe=arch` runs `install-waypipe.sh`, which downloads Arch Linux ARM's package itself, when waypipe is missing; it doesn't update it, `install-waypipe.sh` does. `--waypipe=box` implies `--arch`: a copy of the box's binary, the same package, which pacman keeps up to date. The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` reuses it; the first time, with nothing installed yet, it asks |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
 The rest of the setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
-What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--ubuntu`,
-`--emacs` and `--waypipe=box` in any box but `ubuntu`. From the host, the box's part of `--emacs`
-and `--waypipe=box` runs through `distrobox enter ubuntu`.
+What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--arch`,
+`--emacs` and `--waypipe=box` in any box but `arch`. From the host, the box's part of `--emacs`
+and `--waypipe=box` runs through `distrobox enter arch`.
 
 `bin/` and `shell-init/` are used from the checkout: `bin/` goes on `PATH`, and the rc files source
 `shell-init/`, so a `git pull` updates both. Other files are copied, not linked, so they keep
@@ -172,10 +172,10 @@ SteamOS updates. The installer can't ask for a sudo password when it runs unatte
 sudo at all.
 
 Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
-works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than the
-`ubuntu` box, which starts it in about half the time, and so does wl-clipboard, which SteamOS
-lacks. emacs-pgtk stays in the box, and waypipe comes from the box or Arch Linux ARM: Homebrew's
-emacs is terminal-only, and it has no waypipe.
+works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than a
+distrobox, which starts it in about half the time, and so does wl-clipboard, which SteamOS lacks.
+emacs stays in the `arch` box, and waypipe comes from Arch Linux ARM, through the box or directly:
+Homebrew's emacs is terminal-only, and it has no waypipe.
 
 `shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes in
 the block at the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of
@@ -401,10 +401,11 @@ one in `~/.local/bin` from one of two sources:
 
 | Source | What |
 |---|---|
-| `--waypipe=arch` | [Arch Linux ARM](https://archlinuxarm.org)'s aarch64 package, through `install-waypipe.sh`: a 1.7 MB download, no distrobox needed, and usually the newer version (0.11.2 against the box's 0.11.0 at the time of writing). `setup.sh` runs it only when waypipe is missing; re-run `install-waypipe.sh` to update |
-| `--waypipe=box` | a copy of the `ubuntu` box's `/usr/bin/waypipe`, which apt keeps up to date; a re-run of `setup.sh --waypipe` refreshes the copy. Needs the box |
+| `--waypipe=arch` | [Arch Linux ARM](https://archlinuxarm.org)'s aarch64 package, downloaded by `install-waypipe.sh` itself: a 0.6 MB download and no distrobox needed. `setup.sh` runs it only when waypipe is missing; re-run `install-waypipe.sh` to update |
+| `--waypipe=box` | a copy of the `arch` box's `/usr/bin/waypipe`, the same package, which pacman keeps up to date (`distrobox upgrade arch`); a re-run of `setup.sh --waypipe` refreshes the copy. Needs the box |
 
-Both binaries need only libc, libgcc, lz4 and zstd, which SteamOS has, so they run on the host
+It is one binary either way, and the box route only spares the download when the box is there
+anyway. It needs only libc, libgcc, lz4 and zstd, which SteamOS has, so it runs on the host
 without entering the box. `install-waypipe.sh` reads the version and checksum from the repo's
 package database over https, checks the download against it, and runs the new binary once before
 installing it, so that a build for a newer glibc than the Frame's leaves the installed one alone;
