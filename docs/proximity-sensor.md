@@ -97,15 +97,39 @@ apparently factory readings at closer distances; the current driver uses none of
 
 User settings live in `~/.config/openvr/config/steamvr.vrsettings`, where they outlast SteamVR
 updates. Editing that file while SteamVR runs doesn't stick: vrserver writes back the settings
-it holds in memory on its next change. Stopping `steamvr.service` to edit it isn't safe either:
-the gamescope session stops with it and starts it again at once. `steamvr cmd
---set-settings-<type> SECTION.KEY VALUE` changes a setting in the running vrserver, which saves
-it, and the driver re-reads its settings on every change. Reading goes the same way, `steamvr
-cmd --settings-<type> SECTION.KEY`, defaults included.
+it holds in memory on its next change. `steamvr cmd --set-settings-<type> SECTION.KEY VALUE`
+changes a setting in the running vrserver, which saves it, and the driver re-reads its settings
+on every change. Reading goes the same way, `steamvr cmd --settings-<type> SECTION.KEY`,
+defaults included. vrcmd can set a key but not remove one.
 
-The measured Frame still carries `driver_cv.proxSensorThresholdMultipleConst` 0.9 in that file
-from 0.4.3, harmless and ignored. Removing it means editing the file with SteamVR stopped:
-`sudo steamvr stop`, edit, `sudo steamvr start`, which stop and start the whole session.
+Removing a key, then, means editing the file while vrserver is down, and getting it down is the
+trick. `systemctl --user stop steamvr.service` doesn't hold: the session answers with a new start
+job within the same second, and systemd reports the stop as cancelled (seen on 0.4.5; the unit's
+`Restart=always` is not the cause, since that applies to crashes, not to an explicit stop).
+Valve's wrapper, `sudo steamvr stop`, holds it by stopping the whole display stack, sddm
+included, and `sudo steamvr start` brings it all back. A runtime mask does the same for the one
+service, without root and without touching the session:
+
+```bash
+systemctl --user mask --runtime steamvr.service && systemctl --user stop steamvr.service
+```
+
+```bash
+jq 'del(.driver_cv.proxSensorThresholdMultipleConst) | if (.driver_cv // {}) == {} then del(.driver_cv) else . end' \
+  ~/.config/openvr/config/steamvr.vrsettings > /tmp/steamvr.vrsettings && mv /tmp/steamvr.vrsettings ~/.config/openvr/config/steamvr.vrsettings
+```
+
+```bash
+systemctl --user unmask --runtime steamvr.service && systemctl --user start steamvr.service
+```
+
+While masked, the session's start attempts fail and the service stays down; the mask lives in
+`/run`, so a reboot clears it even if the unmask is forgotten. The gamescope session stays up
+throughout, and SteamVR comes back in about ten seconds. That is how the stale
+`driver_cv.proxSensorThresholdMultipleConst` 0.9 from 0.4.3 was removed from the measured Frame
+on 2026-10-07: afterwards `steamvr cmd --settings-float driver_cv.proxSensorThresholdMultipleConst`
+reported the default 1.4, and the Presence Sensor setting was untouched. Back the file up first;
+the setting that matters, `steamvr.proxThresholdMode`, is in it.
 
 ## Finding an undocumented setting: what worked
 
