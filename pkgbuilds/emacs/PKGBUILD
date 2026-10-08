@@ -1,0 +1,94 @@
+# Emacs (PGTK) for the Frame host, installed under ~/.local with no root.
+#
+# The Frame's SteamOS image carries makepkg, gcc and the GTK, gnutls and image-library headers,
+# so this builds on the host itself, against the host's own libraries. The prefix is baked in at
+# configure time, which is what lets emacs find its lisp, icons and desktop file under ~/.local
+# instead of /usr. The package therefore holds files under home/<user>/.local/ and is for this
+# one user on this one device; it is not a redistributable package.
+#
+# Build (on the Frame, in this directory; keep the Frame awake, and use tmux):
+#   makepkg -f
+# Install, remove and query with bin/pacman-home, pacman with its database under ~/.local:
+#   pacman-home -U emacs-wayland-*.pkg.tar.zst
+#
+# After a SteamOS update, `ldd ~/.local/bin/emacs | grep "not found"` says whether a rebuild is
+# due. `depends` lists host packages: makepkg checks them against the host's database, and
+# pacman-home passes them as --assume-installed. Compared with Arch's emacs-wayland: no native
+# compilation (the host has no libgccjit) and no tree-sitter (not on the host either; if one is
+# built into ~/.local, add --with-tree-sitter and Arch's treesit patches for 31.1).
+
+# Arch's name for the PGTK build, providing emacs as Arch's does, so `pacman-home -Q emacs`
+# answers and a package depending on emacs is satisfied.
+pkgname=emacs-wayland
+pkgver=31.1
+pkgrel=1
+pkgdesc='Emacs with PGTK, built for ~/.local on the Steam Frame host'
+provides=(emacs)
+conflicts=(emacs)
+arch=('aarch64' 'x86_64')
+url='https://www.gnu.org/software/emacs/emacs.html'
+license=(GPL-3.0-or-later)
+depends=(
+  acl
+  cairo
+  dbus
+  giflib
+  gmp
+  gnutls
+  gtk3
+  harfbuzz
+  jansson
+  lcms2
+  libjpeg-turbo
+  libpng
+  librsvg
+  libtiff
+  libwebp
+  libxml2
+  ncurses
+  sqlite
+  systemd-libs
+  zlib
+)
+# !debug: no split debug package, and no debug symbols rewritten to a /usr/lib/debug path.
+# !lto:   halves the build on the Frame's CPU for a saving that does not matter here.
+options=(!debug !lto)
+source=(https://ftp.gnu.org/gnu/emacs/emacs-${pkgver}.tar.xz)
+# Upstream's tarball, as checked against its GPG signature by Arch's emacs 31.1 packaging.
+b2sums=('c9f8cf37553c0e2913eb12d7e069735c23baca3b725332f17b4b4784d1e4987c9ae098dae669e65e49fa01d8b9a63e518b210640892216e0a9ae02e51f3d0581')
+
+_prefix=$HOME/.local
+
+build() {
+  cd emacs-${pkgver}
+
+  # Anything already built into ~/.local (a future tree-sitter, say) is found at configure time
+  # through pkg-config and at run time through the rpath, without an LD_LIBRARY_PATH.
+  export PKG_CONFIG_PATH="$_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export LDFLAGS="$LDFLAGS -Wl,-rpath,$_prefix/lib"
+  # Arch's workaround for giflib's configure probe.
+  export ac_cv_lib_gif_EGifPutExtensionLast=yes
+
+  ./configure \
+    --prefix="$_prefix" \
+    --disable-build-details \
+    --with-pgtk \
+    --with-cairo \
+    --with-harfbuzz \
+    --with-modules \
+    --without-native-compilation \
+    --without-tree-sitter \
+    --with-gameuser=no
+  make
+}
+
+package() {
+  cd emacs-${pkgver}
+  make DESTDIR="$pkgdir" install
+
+  # Emacs's install writes the absolute bin path into the emacsclient launchers only; the emacs
+  # ones say `Exec=emacs`, and the Frame's session PATH is /usr/local/bin:/usr/bin, so a
+  # launcher would not find it. The Info dir file, the install does write.
+  sed -i -E "s|^(Try)?Exec=emacs( \|$)|\1Exec=$_prefix/bin/emacs\2|" \
+    "$pkgdir$_prefix"/share/applications/*.desktop
+}

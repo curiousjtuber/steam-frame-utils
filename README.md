@@ -9,14 +9,14 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `setup.sh` | checks and installs everything below but `apps/`, whose installers are run by hand (see [Setup](#setup)) |
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
-| `install-waypipe.sh` | waypipe for the host from Arch Linux ARM's package, no root needed (see [The waypipe function](#the-waypipe-function)) |
+| `install-waypipe.sh` | waypipe for the host: Arch Linux ARM's package, relocated under `~/.local` by `pacman-home`, no root needed (see [The waypipe function](#the-waypipe-function)) |
 | `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, BSManager and Full Keyboard (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
-| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/pacman/` is pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
+| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
 | `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
 | `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md), and [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found |
 
@@ -27,7 +27,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--brew] [--zsh] [--emacs] [--waypipe[=arch|box]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--brew] [--zsh] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -51,17 +51,15 @@ Options add the rest, and each one also fixes only what's missing:
 | `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` in the block at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--arch` | creates the `arch` distrobox from `docker.io/menci/archlinuxarm:latest`, Arch Linux ARM, if it doesn't exist (see [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) for why that image, and for the pacman sandbox the box is created without). The image is about 0.7 GB and the first start takes a few minutes, so it says so and asks first; `--yes` skips the question |
-| `--emacs` | implies `--arch`. emacs-wayland, the pgtk build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin`. An export left by another box, as the earlier `ubuntu` box's, is replaced; anything else already there is left alone |
-| `--waypipe` | waypipe in `~/.local/bin` for the host, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). `--waypipe=arch` runs `install-waypipe.sh`, which downloads Arch Linux ARM's package itself, when waypipe is missing; it doesn't update it, `install-waypipe.sh` does. `--waypipe=box` implies `--arch`: a copy of the box's binary, the same package, which pacman keeps up to date. The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` reuses it; the first time, with nothing installed yet, it asks |
+| `--waypipe` | waypipe for the host, Arch Linux ARM's package relocated under `~/.local` by `install-waypipe.sh` through `pacman-home`, when `pacman-home` doesn't have it, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). It doesn't update waypipe; `install-waypipe.sh` does |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
 The rest of the setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
-What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--arch`,
-`--emacs` and `--waypipe=box` in any box but `arch`. From the host, the box's part of `--emacs`
-and `--waypipe=box` runs through `distrobox enter arch`.
+What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--arch` in any box
+but `arch`.
 
 `bin/` and `shell-init/` are used from the checkout: `bin/` goes on `PATH`, and the rc files source
 `shell-init/`, so a `git pull` updates both. Other files are copied, not linked, so they keep
@@ -175,8 +173,8 @@ sudo at all.
 Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
 works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than a
 distrobox, which starts it in about half the time, and so does wl-clipboard, which SteamOS lacks.
-emacs stays in the `arch` box, and waypipe comes from Arch Linux ARM, through the box or directly:
-Homebrew's emacs is terminal-only, and it has no waypipe.
+emacs is built for the host from `pkgbuilds/emacs/`, and waypipe is Arch Linux ARM's package
+relocated there: Homebrew's emacs is terminal-only, and it has no waypipe.
 
 `shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes in
 the block at the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of
@@ -311,26 +309,20 @@ CLI has to run on the host.
 
 ### The waypipe function
 
-SteamOS has no waypipe, and Valve's package repos for the Frame don't carry it, so `--waypipe` puts
-one in `~/.local/bin` from one of two sources:
-
-| Source | What |
-|---|---|
-| `--waypipe=arch` | [Arch Linux ARM](https://archlinuxarm.org)'s aarch64 package, downloaded by `install-waypipe.sh` itself: a 0.6 MB download and no distrobox needed. `setup.sh` runs it only when waypipe is missing; re-run `install-waypipe.sh` to update |
-| `--waypipe=box` | a copy of the `arch` box's `/usr/bin/waypipe`, the same package, which pacman keeps up to date (`distrobox upgrade arch`); a re-run of `setup.sh --waypipe` refreshes the copy. Needs the box |
-
-It is one binary either way, and the box route only spares the download when the box is there
-anyway. It needs only libc, libgcc, lz4 and zstd, which SteamOS has, so it runs on the host
-without entering the box. `install-waypipe.sh` reads the version and checksum from the repo's
-package database over https, checks the download against it, and runs the new binary once before
-installing it, so that a build for a newer glibc than the Frame's leaves the installed one alone;
-the old binary is backed up to `waypipe.bak-<timestamp>`. The package signature isn't checked.
-
-The choice is noted in `~/.local/state/steam-frame-utils/waypipe-source`, so a bare `--waypipe` on
-a re-run keeps it, and neither source replaces the other's binary unasked. To switch, pass the
-other `=arch` or `=box` once. A waypipe installed by an earlier version of `setup.sh`, with no note
-yet, counts as the box's. With nothing installed and no note, a bare `--waypipe` asks, or stops
-when there's no terminal to ask on.
+SteamOS has no waypipe, and Valve's package repos for the Frame don't carry it, so `--waypipe`
+installs [Arch Linux ARM](https://archlinuxarm.org)'s aarch64 package under `~/.local` through
+`install-waypipe.sh`, when `pacman-home` doesn't have it yet; re-run `install-waypipe.sh` to
+update. The package needs only libc, libgcc, lz4 and zstd, which SteamOS has, and no file outside
+its binary and man page, so it runs on the host as it is (see [Packages for the
+host](#packages-for-the-host)). `install-waypipe.sh` runs `pacman-home relocate waypipe`: pacman syncs
+Arch Linux ARM's package databases from one mirror, downloads the package when the installed
+version differs, checks it against the database's checksum, and the package's `/usr` tree is
+moved under `~/.local` and installed into `pacman-home`'s database, so `pacman-home -Q waypipe`
+knows it and `pacman-home -R waypipe` removes it. A library the host lacks, a newer glibc among
+them, is reported before the install. A waypipe from before `pacman-home`, a bare binary in
+`~/.local/bin`, is backed up to `waypipe.bak-<timestamp>` first. The package signature isn't
+checked. The `arch` distrobox used to be the other source, a copy of its own waypipe; the
+relocated package is the same binary without the box.
 
 `shell-init/waypipe.sh` wraps `waypipe` in a function. Game Mode is an X11 session: gamescope names
 its Wayland socket only in `GAMESCOPE_WAYLAND_DISPLAY` (`gamescope-0`), so a `waypipe` client
@@ -385,7 +377,7 @@ there too.
 ### `~/.distroboxrc`
 
 The checkout's `bin/` is on `PATH` once an rc file has run, but not for a distrobox export
-started without one, such as `~/.local/bin/emacs` from a launcher. The export runs
+started without one, such as one started from a launcher. The export runs
 `distrobox-enter` by its full path, which then finds `/usr/bin/podman` and fails with the crun
 error above. distrobox sources `~/.distroboxrc` before it looks for podman, so `setup.sh` puts a
 block there (`distrobox/distroboxrc`) that moves `bin/` to the front of `PATH` for distrobox alone.
@@ -410,10 +402,16 @@ The Frame's image carries makepkg, gcc, meson, cmake and the headers of its libr
 package can be built on the host itself, against the exact libraries it will run with, with no
 distrobox and no cross toolchain. `pkgbuilds/` holds PKGBUILDs configured with
 `--prefix=$HOME/.local`, so the result finds its data under `~/.local` instead of the read-only
-`/usr`. The header of each PKGBUILD says what it leaves out and why.
+`/usr`. `pkgbuilds/emacs/` is Emacs with PGTK, a host build that sees the Frame's own `/usr`,
+D-Bus and processes, which the distrobox one does not. The header of each PKGBUILD says what it
+leaves out and why.
 
 ```bash
-cd ~/steam-frame-utils/pkgbuilds/NAME && makepkg -f && pacman-home -U NAME-*.pkg.tar.zst
+cd ~/steam-frame-utils/pkgbuilds/emacs && makepkg -f
+```
+
+```bash
+pacman-home -U emacs-wayland-*.pkg.tar.zst
 ```
 
 Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
@@ -454,3 +452,6 @@ libalpm is current, libalpm.so.16 where the host's pacman 6.1 carries .so.14, fo
 against libalpm. It also skips the ldconfig run that the host's pacman attempts after every
 transaction and that fails on the read-only root. `pacman-home` switches to it as soon as it is
 installed and still looks host packages up with the host's.
+
+After a SteamOS update, `ldd ~/.local/bin/emacs | grep "not found"` says whether a host library
+moved from under a build; the fix is a rebuild and `pacman-home -U` again.
