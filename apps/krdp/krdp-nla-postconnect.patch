@@ -1,0 +1,20 @@
+krdp 6.7.5: with NLA, don't re-check the Client Info PDU's credentials in onPostConnect.
+NLA already verified them against the SAM file; FreeRDP 3.32 clients (krdc 26.08) don't
+repeat them in the Info PDU, so the comparison rejected every logged-in user with
+"PostConnect for peer failed". krdp master trusts NLA here when PAM isn't in use.
+
+--- a/src/RdpConnection.cpp	2026-10-08 10:21:14.911496013 -0400
++++ b/src/RdpConnection.cpp	2026-10-08 10:21:14.911521661 -0400
+@@ -542,6 +542,12 @@
+             qCDebug(KRDP) << "PAM authentication succeeded for user" << username;
+             return true;
+         }
++    } else {
++        // NLA has already checked the user and password against the SAM file (createSamFile),
++        // and a client may leave them out of the Client Info PDU (FreeRDP 3.32 does), so the
++        // comparison below would reject a logged-in user. krdp master trusts NLA here too.
++        qCDebug(KRDP) << "User" << username << "authenticated by NLA";
++        return true;
+     }
+ 
+     const auto users = d->server->users();

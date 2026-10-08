@@ -1,0 +1,151 @@
+# KDE's krdpserver (KRdp, Plasma's Remote Desktop) as a flatpak for the Steam Frame: serves a
+# Plasma desktop running on the Frame over RDP. SteamOS has no krdp, and anything built against
+# its Plasma breaks at the next SteamOS update, so it's built on KDE's runtime, with its own Qt,
+# KF6, FreeRDP and kpipewire. Built and installed by apps/install-krdp.sh; run by bin/krdpd.
+#
+# It captures through KWin's own screencast and fake-input protocols (krdpserver --plasma), on a
+# Wayland socket bin/krdpd names. KWin restricts those protocols to clients it trusts: a
+# sandboxed client connecting through flatpak's Wayland socket (--socket=wayland) carries a
+# security context with this app id, and KWin reads <app id>.desktop for the interfaces it may
+# use. krdp's own desktop file lists them, so it's renamed to this app id and exported. No
+# permission bypass in KWin is needed, so the stock desktop works as well as Frametop's.
+#
+# Pinned here on purpose (verified 2026-10-08):
+# - FreeRDP 3.31.1: 3.32 turns on extended security for server-side NLA and krdpserver rejects
+#   every login (FreeRDP issue 13567, KRdp MR 248). Move on once krdp has the fix.
+# - kpipewire with kpipewire-cursor-bitmap-size.patch: it copies the cursor bitmap with
+#   stride * height * 4 bytes (stride is already bytes) and segfaults on the 256 px cursor
+#   SteamOS's gamescope sets. Upstream: https://invent.kde.org/plasma/kpipewire/-/merge_requests/285
+# - krdp with krdp-nla-postconnect.patch: 6.7.5 re-checks the Client Info PDU's credentials after
+#   NLA, which FreeRDP 3.32 clients (krdc 26.08) leave out; krdp master trusts NLA (backport).
+app-id: io.github.curiousjtuber.Krdp
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: krdpserver
+rename-desktop-file: org.kde.krdpserver.desktop
+finish-args:
+  - --share=network          # the RDP port
+  - --share=ipc
+  - --device=dri
+  - --socket=wayland         # the compositor WAYLAND_DISPLAY names when it starts, with a security context
+  - --filesystem=xdg-run/pipewire-0 # the host's PipeWire, which the nested desktop shares
+  - --filesystem=~/.config/krdpd:ro   # the TLS certificate and key (by absolute path: a nested
+                                      # session may point XDG_CONFIG_HOME elsewhere)
+  - --env=QT_QPA_PLATFORM=wayland
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/man
+  - '*.la'
+modules:
+  - name: plasma-wayland-protocols
+    buildsystem: cmake-ninja
+    builddir: true
+    sources:
+      - type: archive
+        url: https://download.kde.org/stable/plasma-wayland-protocols/plasma-wayland-protocols-1.19.0.tar.xz
+        sha256: 45679fe7a63c414f2c81793a62528fae6ccee584b6965719d7f9fc6dd48ba846
+
+  - name: freerdp
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DBUILD_TESTING=OFF
+      - -DWITH_SERVER=ON
+      - -DWITH_CLIENT=OFF
+      - -DWITH_CLIENT_SDL=OFF
+      - -DWITH_CLIENT_SDL2=OFF
+      - -DWITH_CLIENT_SDL3=OFF
+      - -DWITH_SAMPLE=OFF
+      - -DWITH_SHADOW=OFF
+      - -DWITH_PROXY=OFF
+      - -DWITH_PLATFORM_SERVER=OFF
+      - -DWITH_X11=OFF
+      - -DWITH_WAYLAND=OFF
+      - -DWITH_CUPS=OFF
+      - -DWITH_PULSE=OFF
+      - -DWITH_FFMPEG=ON
+      - -DWITH_DSP_FFMPEG=ON
+      - -DWITH_SWSCALE=ON
+      - -DWITH_VAAPI=OFF
+      - -DWITH_PCSC=OFF
+      - -DWITH_PKCS11=OFF
+      - -DWITH_KRB5=OFF
+      - -DWITH_FUSE=OFF
+      - -DWITH_MANPAGES=OFF
+      - -DWITH_WEBVIEW=OFF
+      - -DCHANNEL_URBDRC=OFF
+    sources:
+      - type: archive
+        url: https://github.com/FreeRDP/FreeRDP/archive/refs/tags/3.31.1.tar.gz
+        sha256: 254de9fe176758e9787347469fb310523782f03c61130508b51b266e374eb6c1
+
+  - name: kpipewire
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: archive
+        url: https://download.kde.org/stable/plasma/6.7.5/kpipewire-6.7.5.tar.xz
+        sha256: 20af39d9450d495468c56a50930810d82137f7ccd3a710592e02b6f620758f55
+      - type: patch
+        path: kpipewire-cursor-bitmap-size.patch
+
+  - name: qtkeychain
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=/app/lib
+      - -DLIB_INSTALL_DIR=/app/lib
+      - -DBUILD_TRANSLATIONS=NO
+      - -DBUILD_WITH_QT6=ON
+    sources:
+      - type: archive
+        url: https://github.com/frankosterfeld/qtkeychain/archive/0.15.0.tar.gz
+        sha256: f4254dc8f0933b06d90672d683eab08ef770acd8336e44dfa030ce041dc2ca22
+
+  - name: kirigami-addons
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: archive
+        url: https://download.kde.org/stable/kirigami-addons/kirigami-addons-1.15.0.tar.xz
+        sha256: 82436c7589cdab2e2ee6b2e7d5ab3bedfa049fa7ded5498c01a90a04b9cdbbb3
+
+  - name: linux-pam
+    buildsystem: meson
+    config-opts:
+      - -Ddocs=disabled
+      - -Dexamples=false
+      - -Dxtests=false
+      - -Daudit=disabled
+      - -Dselinux=disabled
+      - -Deconf=disabled
+      - -Dnis=disabled
+      - -Dpam_userdb=disabled
+      - -Dvendordir=          # else its config goes to /usr/share/pam, read-only here
+    sources:
+      - type: archive
+        url: https://github.com/linux-pam/linux-pam/releases/download/v1.7.3/Linux-PAM-1.7.3.tar.xz
+        sha256: 2ce4765fd49df6693771ef2941f81e33d8ee14b94a81a5c7b369aa3b137b85a5
+
+  - name: krdp
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DBUILD_TESTING=OFF
+      - -DBUILD_EXAMPLES=OFF
+      - -DBUILD_PLASMA_SESSION=ON
+    sources:
+      - type: archive
+        url: https://download.kde.org/stable/plasma/6.7.5/krdp-6.7.5.tar.xz
+        sha256: 483fb1d9ffd6954e7b12aa4321763a31726e5c0daac10e135cd13a503ced5330
+      - type: patch
+        path: krdp-nla-postconnect.patch

@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# steam-frame-utils: serve a Plasma desktop running on the Frame over RDP, with KDE's krdpserver
+# from the flatpak apps/install-krdp.sh builds. For KRDC, Remmina or Windows Remote Desktop:
+# every screen of that desktop, side by side as KWin arranges them, the cursor drawn by the
+# viewer. Started by hand, never automatically. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#apps
+#
+# Usage:  krdpd start [--desktop frametop|stock|DIR] [--port N] [--user NAME] [--address ADDR]
+#         krdpd stop | status | log [LINES]
+#         krdpd password [NEW | --generate]
+#
+# --desktop  which desktop to serve: frametop (Frametop's, runtime dir /run/user/UID/frametop),
+#            stock (SteamOS's Desktop, /run/user/UID/nested_plasma), or a runtime dir holding
+#            a wayland-0 socket. Default: frametop when it runs. stock needs --force: on SteamOS
+#            0.4.5 the stock desktop's KWin (6.2.5 on its X11 backend inside gamescope) crashes
+#            in its screencast plugin as soon as a client connects, leaving a bare KWin that
+#            only logging out of it clears; Frametop's KWin (Wayland backend) streams fine.
+# --port     default 3391. 3389 is SteamOS's own xrdp (a separate X11 session), 3390 Frametop
+#            Remote Access's krdp; this one runs beside either.
+# --user     the login name clients give; default the Frame's user. The password is the one in
+#            ~/.config/krdpd/password, made at the first start; `krdpd password` shows it,
+#            `krdpd password NEW` sets it, `--generate` makes a new random one (restart after).
+# --address  default 0.0.0.0, every address: the Frame's firewall already lets the LAN at every
+#            port above 1024, and RDP brings its own TLS and login (NLA). Give the tailnet
+#            address to keep it off the LAN.
+#
+# Clients accept the Frame's self-signed certificate once (made here, in ~/.config/krdpd).
+# KWin allows the capture through the flatpak's desktop file (see the manifest), so neither
+# desktop needs a permission bypass. One thing this doesn't do for Frametop: ask ft-screens for
+# full frame rate on screens you aren't looking at, so those draw slowly over RDP; Frametop
+# Remote Access does that for its own server. Log: ~/.local/state/krdpd.log.
+
+set -euo pipefail
+
+APP=io.github.curiousjtuber.Krdp
+# Fixed paths, not XDG_CONFIG_HOME and XDG_STATE_HOME: a terminal inside Frametop's desktop
+# has those pointed at the nested session's folders, and the flatpak is granted ~/.config/krdpd.
+conf=$HOME/.config/krdpd
+log=$HOME/.local/state/krdpd.log
+info=$HOME/.local/state/krdpd.info  # what start served, for status
+uid=$(id -u)
+run=/run/user/$uid
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "krdpd: $*" >&2; exit 1; }
+
+installed() { flatpak --user info "$APP" >/dev/null 2>&1 || flatpak info "$APP" >/dev/null 2>&1; }
+# The running instance's krdpserver, if any: flatpak lists instances by app id, and child-pid is
+# the app's own process (pid is the sandbox's).
+instance_pid() { flatpak ps --columns=application,child-pid 2>/dev/null | awk -v a="$APP" '$1 == a {print $2; exit}'; }
+running() { [ -n "$(instance_pid)" ]; }
+
+resolve_desktop() {  # prints the runtime dir
+  local d=$1 f=$run/frametop s=$run/nested_plasma
+  case $d in
+    frametop) echo "$f" ;;
+    stock) echo "$s" ;;
+    "")
+      if [ -S "$f/wayland-0" ]; then echo "$f"
+      elif [ -S "$s/wayland-0" ]; then echo "$s"
+      else die "no desktop is running (Frametop: $f, stock: $s): start one from the launcher first"
+      fi ;;
+    *) echo "$d" ;;
+  esac
+}
+
+ensure_creds() {
+  mkdir -p -m 0700 "$conf"
+  if [ ! -s "$conf/password" ]; then
+    (umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=' | cut -c1-20 > "$conf/password")
+    echo "made a password: krdpd password shows it"
+  fi
+  if [ ! -s "$conf/cert.pem" ]; then
+    (umask 077; openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$(hostname)" \
+      -keyout "$conf/key.pem" -out "$conf/cert.pem" 2>/dev/null)
+  fi
+}
+
+addresses() {  # "host.local:PORT  LAN:PORT  tailnet-name:PORT"
+  local port=$1 lan tail
+  lan=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+  tail=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+  printf '%s.local:%s' "$(hostname)" "$port"
+  [ -n "$lan" ] && printf '  %s:%s' "$lan" "$port"
+  [ -n "$tail" ] && printf '  %s:%s (tailnet)' "$tail" "$port"
+  echo
+}
+
+start() {
+  local desktop= port=3391 user address=0.0.0.0 dir force=0
+  user=$(id -un)
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --desktop) desktop=${2:?--desktop needs frametop, stock or a dir}; shift 2 ;;
+      --force) force=1; shift ;;
+      --port) port=${2:?--port needs a number}; shift 2 ;;
+      --user) user=${2:?--user needs a name}; shift 2 ;;
+      --address) address=${2:?--address needs an address}; shift 2 ;;
+      *) die "unknown argument: $1 (see --help)" ;;
+    esac
+  done
+  installed || die "$APP isn't installed: run ~/steam-frame-utils/apps/install-krdp.sh"
+  running && die "already running (krdpd status); stop it first"
+  ss -ltn 2>/dev/null | grep -q ":$port " && die "port $port is in use (3389 is SteamOS's xrdp, 3390 Frametop Remote Access): pick another with --port"
+  dir=$(resolve_desktop "$desktop")
+  [ -S "$dir/wayland-0" ] || die "no Wayland socket at $dir/wayland-0: is that desktop running?"
+  if [ "$dir" = "$run/nested_plasma" ] && [ "$force" != 1 ]; then
+    die "the stock desktop's KWin crashes when captured on this SteamOS (see --help); --force tries anyway"
+  fi
+  ensure_creds
+  mkdir -p "$(dirname "$log")"
+  # flatpak maps the sandbox's /run/user/UID from XDG_RUNTIME_DIR and resolves its xdg grants
+  # against the XDG dirs, so give it the user's real ones, whatever this shell inherited from a
+  # nested session. WAYLAND_DISPLAY, as an absolute path, is the socket flatpak connects the
+  # sandbox to (with a security context, which is what KWin trusts).
+  export XDG_RUNTIME_DIR=$run
+  unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME
+  WAYLAND_DISPLAY=$dir/wayland-0 setsid flatpak run --env=LANG=C.UTF-8 "$APP" \
+    --plasma --address "$address" --port "$port" \
+    -u "$user" -p "$(cat "$conf/password")" \
+    --certificate "$conf/cert.pem" --certificate-key "$conf/key.pem" > "$log" 2>&1 < /dev/null &
+  for _ in $(seq 20); do ss -ltn 2>/dev/null | grep -q ":$port " && break; sleep 0.5; done
+  if ! ss -ltn 2>/dev/null | grep -q ":$port "; then
+    echo "krdpd: didn't come up; the log says:" >&2; tail -5 "$log" >&2; exit 1
+  fi
+  printf 'desktop=%s\nport=%s\nuser=%s\n' "$dir" "$port" "$user" > "$info"
+  echo "serving $(basename "$dir" | sed 's/nested_plasma/the stock desktop/; s/^frametop$/Frametop/') over RDP"
+  echo "connect to: $(addresses "$port")   user $user   password: krdpd password"
+}
+
+stop() {
+  running || { echo "not running"; return 0; }
+  flatpak kill "$APP" 2>/dev/null || true
+  for _ in $(seq 20); do running || break; sleep 0.5; done
+  running && die "still running: $(instance_pid)"
+  echo "stopped"
+}
+
+status() {
+  installed && echo "installed: $APP" || echo "not installed: run ~/steam-frame-utils/apps/install-krdp.sh"
+  local p; p=$(instance_pid)
+  if [ -z "$p" ]; then echo "not running"; return 0; fi
+  local port dir user
+  port=$(sed -n 's/^port=//p' "$info" 2>/dev/null); dir=$(sed -n 's/^desktop=//p' "$info" 2>/dev/null); user=$(sed -n 's/^user=//p' "$info" 2>/dev/null)
+  echo "running (pid $p), port ${port:-?}, serving ${dir:-?}"
+  echo "connect to: $(addresses "${port:-3391}")   user ${user:-?}"
+}
+
+password() {
+  mkdir -p -m 0700 "$conf"
+  case ${1:-} in
+    "") [ -s "$conf/password" ] && cat "$conf/password" || echo "none yet: made at the first start" ;;
+    --generate) rm -f "$conf/password"; ensure_creds; cat "$conf/password" ;;
+    *) (umask 077; printf '%s\n' "$1" > "$conf/password"); echo "set" ;;
+  esac
+  running && echo "(restart krdpd for a changed password to apply)"
+}
+
+case ${1:-} in
+  start) shift; start "$@" ;;
+  stop) stop ;;
+  status) status ;;
+  log) tail -n "${2:-30}" "$log" 2>/dev/null || echo "no log yet" ;;
+  password) shift; password "$@" ;;
+  -h|--help|"") usage ;;
+  *) die "unknown command: $1 (see --help)" ;;
+esac

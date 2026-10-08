@@ -1,0 +1,19 @@
+PipeWireSourceStream::handleFrame copies the cursor bitmap with stride * height * 4
+bytes, but spa_meta_bitmap::stride is already in bytes (KWin sets it to width * 4), so
+the copy reads three bitmaps' worth past the end of the cursor metadata. Whether that
+segfaults depends on what follows in memory: with the 256 px cursor the Frametop desktop
+inherits from gamescope it reads 1 MiB from a 256 KiB region and krdpserver dies in its
+PipeWireProduce thread as soon as a frame carries a cursor bitmap. Found in kpipewire
+6.7.5; upstream master still has the line (2026-10-08).
+
+--- a/src/pipewiresourcestream.cpp
++++ b/src/pipewiresourcestream.cpp
+@@ -625,7 +625,7 @@
+
+             QImage cursorTexture;
+             if (bitmap && bitmap->size.width > 0 && bitmap->size.height > 0) {
+-                const size_t bufferSize = bitmap->stride * bitmap->size.height * 4;
++                const size_t bufferSize = bitmap->stride * bitmap->size.height;
+                 void *bufferData = malloc(bufferSize);
+                 memcpy(bufferData, SPA_MEMBER(bitmap, bitmap->offset, uint8_t), bufferSize);
+                 cursorTexture = PWHelpers::SpaBufferToQImage(static_cast<const uchar *>(bufferData),

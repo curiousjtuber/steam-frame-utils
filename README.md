@@ -10,7 +10,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `install-waypipe.sh` | waypipe for the host: Arch Linux ARM's package, relocated under `~/.local` by `pacman-home`, no root needed (see [The waypipe function](#the-waypipe-function)) |
-| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, Deskflow, BSManager and Full Keyboard (see [Apps](#apps)) |
+| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, Deskflow, BSManager, Full Keyboard and KRdp's server (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, mise, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
@@ -265,6 +265,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 | `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
+| `install-krdp.sh [--uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd` |
 
 - **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
   distrobox. The first install also pulls the KDE runtime from Flathub, a few hundred MB, and
@@ -297,6 +298,29 @@ re-run updates. The header comment of each has the details and the uninstall ste
   `SHA256SUMS` and runs the `install.sh` inside it, which keeps the previous release for rollback
   and refuses one already installed, so a re-run with nothing newer just says so. Close the
   keyboard before updating. `--uninstall` keeps the settings in `~/.config/framekeyboard`.
+- **KRdp's server** is the other direction: the Frame as the RDP host, for seeing and using a
+  Plasma desktop that runs on it (Frametop's, or SteamOS's stock Desktop) from a PC. SteamOS has
+  no krdp and Flathub only has the client, so `install-krdp.sh` builds it as a flatpak on KDE's
+  runtime, with its own FreeRDP and kpipewire, pinned and patched as the manifest in `apps/krdp/`
+  explains (FreeRDP 3.32 breaks krdp's login; kpipewire crashes on the 256 px cursor gamescope
+  sets; krdp 6.7.5 rejects FreeRDP 3.32 clients after NLA). The first run installs the KDE 6.11
+  SDK and flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
+  rebuild only what changed. KWin lets the sandboxed server capture through the app's desktop
+  file, so neither desktop needs KWin's permission checks turned off. Nothing starts it by
+  itself.
+- **`bin/krdpd start [--desktop frametop|stock|DIR] [--port N] [--user NAME] [--address ADDR]`**,
+  `stop`, `status`, `log`, `password [NEW | --generate]` runs that server by hand. It serves
+  Frametop's desktop when that runs (the stock Desktop only with `--force`: on SteamOS 0.4.5 its
+  KWin, 6.2.5 on the X11 backend inside gamescope, crashes in its screencast plugin as soon as a
+  client connects, which leaves a bare KWin until you log out of it; Frametop's KWin, on the
+  Wayland backend, streams fine), on port 3391 by default: 3389
+  is SteamOS's own xrdp, which logs into a separate X11 session, and 3390 is Frametop Remote
+  Access's krdp when that is on, so `krdpd` runs beside either. The login is the Frame's user with
+  the password in `~/.config/krdpd/password`, made at the first start; the self-signed certificate
+  there is what clients accept once. The Frame's firewall already allows every port above 1024 on
+  the LAN (see [Firewall](#firewall)), and RDP brings its own TLS and login (NLA); `--address`
+  with the tailnet address keeps it off the LAN. Over RDP, Frametop's screens you aren't looking
+  at draw slowly, since only Frametop Remote Access asks ft-screens for full rate.
 - **`bin/bsmanager [--no-gpu] [HOST]`** shows the Frame's BSManager in a window on a Linux PC's
   Wayland desktop, through waypipe. In the headset, start BSManager from Steam instead. It runs in
   either of two places:
