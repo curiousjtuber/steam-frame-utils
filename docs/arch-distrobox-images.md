@@ -23,7 +23,9 @@ from having used the image, not re-checked.
 ## Using one
 
 `setup.sh --arch` creates the `arch` box from `menci/archlinuxarm`, with the pacman fix below
-applied through `--pre-init-hooks`, so it comes up first try. By hand that is:
+applied through `--pre-init-hooks`, so it comes up first try; `--emacs=box` and `--waypipe=box`
+create it too, then install emacs-wayland and waypipe in it and put the exports and the copy in
+`~/.local/bin`. By hand that is:
 
 ```bash
 distrobox create --name arch --image docker.io/menci/archlinuxarm:latest \

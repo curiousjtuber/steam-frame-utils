@@ -2,15 +2,17 @@
 # Set up a Steam Frame's user environment from this repo, as the steamos user. Re-running it only
 # changes what is missing or out of date.
 #
-# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--arch] [--waypipe] [--mise]
-#                   [--packages[=NAME,...]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--arch] [--emacs[=host|box]]
+#                   [--waypipe[=host|box]] [--mise] [--packages[=NAME,...]]
+#                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
 # that finds bin/podman, the Desktop Mode cursor fix, and, in ~/.bashrc and ~/.zshrc, this
 # checkout's bin/ on PATH and the Frametop desktop terminal fix.
 #
 # --check           report what would change, and change nothing
-# --yes             create the arch box without asking first
+# --yes             answer yes: create the arch box, and replace an installed emacs or waypipe
+#                   route with the other one
 # --brew            Homebrew in /home/linuxbrew/.linuxbrew if it isn't there, wl-clipboard from
 #                   it, and brew shellenv in ~/.bashrc and ~/.zshrc; uses sudo once, to create
 #                   /home/linuxbrew
@@ -18,10 +20,18 @@
 # --arch            create the arch distrobox, Arch Linux ARM, if it doesn't exist. It asks
 #                   first: the image is about 0.7 GB, and the box's first start takes a few
 #                   minutes.
-# --waypipe         waypipe for the host, Arch Linux ARM's package relocated under ~/.local by
-#                   install-waypipe.sh through pacman-home, when pacman-home doesn't have it
-#                   (re-run that script to update it), and the Game Mode waypipe function in
-#                   ~/.bashrc and ~/.zshrc.
+# --emacs           emacs, from one of two sources. =host: pkgbuilds/emacs built with makepkg and
+#                   installed under ~/.local with pacman-home, the same as --packages=emacs-wayland.
+#                   =box: emacs-wayland in the arch box, with emacs and emacsclient exported to
+#                   ~/.local/bin; implies --arch. Bare, it keeps the route in place, host when
+#                   there is none. Both put the same names in ~/.local/bin, so switching asks
+#                   before replacing what is there; --yes answers.
+# --waypipe         waypipe for the host, from one of two sources, and the Game Mode waypipe
+#                   function in ~/.bashrc and ~/.zshrc. =host (or =arch, its old name): Arch Linux
+#                   ARM's package relocated under ~/.local by install-waypipe.sh through
+#                   pacman-home (re-run that script to update it). =box: a copy of the arch box's
+#                   /usr/bin/waypipe, the same package, which pacman in the box keeps current and
+#                   a re-run refreshes; implies --arch. Bare and switching as for --emacs.
 # --mise            mise in ~/.local/bin if it isn't there, its activation in ~/.bashrc and
 #                   ~/.zshrc (shell-init/mise.sh, unless the file activates mise already), and
 #                   rust through it (mise use -g rust), for a Rust package in pkgbuilds/, since
@@ -39,8 +49,8 @@
 #                   update them.
 #
 # The host and its distroboxes share the home directory, so it also runs inside a distrobox,
-# except for what needs the host: --tailscale, --brew, --zsh and --packages always, and --arch
-# from any box but arch itself.
+# except for what needs the host: --tailscale, --brew, --zsh, --packages and --emacs=host always,
+# and --arch, --emacs=box and --waypipe=box from any box but arch itself.
 #
 # bin/ and shell-init/ are used from this checkout: bin/ goes on PATH, for shells and for
 # distrobox, and the rc files source shell-init/, so a git pull updates both; after moving the
@@ -68,9 +78,14 @@ IMAGE_SIZE="about 0.7 GB"
 # as the Frame's, as fatal. distrobox-init's first pacman run would then kill the box before it
 # can be entered, so the sandbox is turned off ahead of it. See docs/arch-distrobox-images.md.
 PRE_INIT_HOOK="sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf"
+# Set when the host re-runs this script inside the arch box for the box's own part.
+IN_BOX_RUN=${SFU_IN_BOX:-}
+PACMAN_HOME=$SRC/bin/pacman-home
+WAYPIPE=$HOME/.local/bin/waypipe
 
-check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_waypipe=0 want_mise=0 want_packages=0
-packages=
+check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_emacs=0 want_waypipe=0 want_mise=0
+want_packages=0
+emacs_route= waypipe_route= packages=
 tailscale=
 nerd_fonts=
 for arg in "$@"; do
@@ -80,7 +95,12 @@ for arg in "$@"; do
     --brew) want_brew=1 ;;
     --zsh) want_zsh=1 want_brew=1 ;;
     --arch) want_arch=1 ;;
+    --emacs) want_emacs=1 ;;
+    --emacs=host) want_emacs=1 emacs_route=host ;;
+    --emacs=box) want_emacs=1 emacs_route=box want_arch=1 ;;
     --waypipe) want_waypipe=1 ;;
+    --waypipe=host|--waypipe=arch) want_waypipe=1 waypipe_route=host ;;
+    --waypipe=box) want_waypipe=1 waypipe_route=box want_arch=1 ;;
     --mise) want_mise=1 ;;
     --packages) want_packages=1 ;;
     --packages=?*) want_packages=1 packages=${arg#*=} ;;
@@ -202,20 +222,116 @@ if [[ $os != "steamos vr" || $(uname -m) != aarch64 ]]; then
   [[ ${FORCE:-} == 1 ]] || exit 1
 fi
 
+# --- emacs and waypipe: host or box ----------------------------------------------------------------
+# Both routes put the same names in ~/.local/bin, so the file there says which is in place, and
+# nothing has to be remembered: pacman-home owns the host route's (pkgbuilds/emacs's symlink, the
+# relocated waypipe); the box route's emacs is a distrobox export, a script with a
+# `# distrobox_binary` line, and its waypipe a plain copy of the box's binary, which nothing owns.
+# A bare option keeps the route in place and takes host when there is none; an explicit =host or
+# =box that differs from it is a switch, asked about further down, after the refusals.
+
+# route_of NAME -- host | box | other | none, for ~/.local/bin/NAME
+route_of() {
+  local bin=$HOME/.local/bin/$1
+  if [[ ! -e $bin && ! -L $bin ]]; then echo none
+  elif "$PACMAN_HOME" -Qo "$bin" >/dev/null 2>&1; then echo host
+  elif grep -q '^# distrobox_binary$' "$bin" 2>/dev/null; then echo box
+  elif [[ $1 == waypipe && -f $bin && ! -L $bin ]]; then echo box
+  else echo other
+  fi
+}
+
+emacs_have=none waypipe_have=none
+if [[ -z $IN_BOX_RUN ]]; then
+  (( want_emacs || want_packages )) && emacs_have=$(route_of emacs)
+  (( want_waypipe )) && waypipe_have=$(route_of waypipe)
+fi
+if (( want_emacs )) && [[ -z $emacs_route ]]; then
+  if [[ $emacs_have == box ]]; then emacs_route=box want_arch=1; else emacs_route=host; fi
+fi
+if (( want_waypipe )) && [[ -z $waypipe_route ]]; then
+  if [[ $waypipe_have == box ]]; then waypipe_route=box want_arch=1; else waypipe_route=host; fi
+fi
+
 if [[ -n $box ]]; then
   [[ -z $tailscale ]] || die "--tailscale needs the Frame's host; run it there, not in the $box box"
   (( ! want_brew )) \
     || die "--brew and --zsh need the Frame's host, since a distrobox doesn't see /home/linuxbrew;" \
       "run it there, not in the $box box"
   (( ! want_arch )) || [[ $box == "$BOX" ]] \
-    || die "--arch needs the host or the $BOX box, not the $box box"
-  (( ! want_packages )) \
-    || die "--packages builds against the host's libraries; run it there, not in the $box box"
+    || die "--arch, --emacs=box and --waypipe=box need the host or the $BOX box, not the $box box"
+  (( ! want_packages )) && [[ $emacs_route != host ]] \
+    || die "--packages and --emacs=host (what a bare --emacs means with the host route in place)" \
+      "build against the host's libraries; run it there, not in the $box box"
 fi
 
 # bin/podman and distrobox's exports have to win even when the caller's PATH lacks them, as it
 # can on a first run in Desktop Mode.
 export PATH=$SRC/bin:$HOME/.local/bin:$PATH
+
+# --- Inside the arch box ------------------------------------------------------------------------
+# The box's own part of --emacs=box and --waypipe=box: pacman packages, and the exports and the
+# copy into the shared ~/.local/bin. The host runs this through distrobox enter.
+
+# pacman_ensure PKG
+pacman_ensure() {
+  if pacman -Q "$1" >/dev/null 2>&1; then
+    say "ok" "$1 in the $BOX box"
+    return
+  fi
+  act "$1 in the $BOX box" "pacman -S"
+  (( check )) && return
+  # With -u: installing against a fresh database without upgrading the rest is the partial
+  # upgrade Arch warns against.
+  sudo pacman -Syu --needed --noconfirm "$1"
+}
+
+# box_export NAME -- the box's /usr/bin/NAME as ~/.local/bin/NAME. Another box's export (the
+# earlier ubuntu box left some) is replaced; distrobox-export regenerates it. Anything else is
+# left alone, unless the host's --check run said it would remove it first (SFU_SWITCHING).
+box_export() {
+  local bin=$HOME/.local/bin/$1
+  if [[ ! -e $bin ]] || [[ " ${SFU_SWITCHING:-} " == *" $1 "* ]]; then
+    act "$bin, exported from the $BOX box" "export"
+  elif grep -qF -- "-n $BOX " "$bin"; then
+    say "ok" "$bin, exported from the $BOX box"
+    return
+  elif grep -q '^# distrobox_binary$' "$bin"; then
+    act "$bin, another box's export, with the $BOX box's" "replace"
+  else
+    say "skip" "$bin exists and isn't a distrobox export; left alone"
+    return
+  fi
+  (( check )) || distrobox-export --bin "/usr/bin/$1" --export-path "$HOME/.local/bin" >/dev/null
+}
+
+in_box_part() {
+  if [[ $emacs_route == box ]]; then
+    # emacs-wayland is the pgtk build, drawing on Wayland directly; it provides emacs and
+    # conflicts with the X11 build of that name.
+    pacman_ensure emacs-wayland
+    box_export emacs
+    box_export emacsclient
+  fi
+  if [[ $waypipe_route == box ]]; then
+    pacman_ensure waypipe
+    # The host runs a plain copy of the box's binary; its libraries are all on SteamOS too.
+    if [[ " ${SFU_SWITCHING:-} " == *" waypipe "* ]]; then
+      act "$WAYPIPE, from the $BOX box" "copy"
+    elif [[ -e /usr/bin/waypipe ]]; then
+      copy_file /usr/bin/waypipe "$WAYPIPE" 0755 || true
+    else
+      act "$WAYPIPE, from the $BOX box" "copy"
+    fi
+  fi
+}
+
+if [[ -n $IN_BOX_RUN ]]; then
+  in_box_part
+  # 100 tells the host's run that something changed.
+  (( changed )) && exit 100
+  exit 0
+fi
 
 # --- ~/.local/bin on PATH -------------------------------------------------------------------------
 # distrobox and its exports live there.
@@ -291,11 +407,87 @@ if [[ -n $nerd_fonts ]]; then
   fi
 fi
 
-# --- waypipe from Arch Linux ARM: --waypipe -------------------------------------------------------
+# --- Switching between the routes ------------------------------------------------------------------
+# An explicit =host or =box against the other route in place: asked about, since it replaces what
+# a previous run put there. --yes answers; with no terminal the installed route stays.
+
+switching=   # what a --check run would have removed, for the in-box dry run (SFU_SWITCHING)
+# confirm_replace WHAT WITH -- "WHAT Replace it with WITH? [y/N]"
+confirm_replace() {
+  (( check || yes )) && return 0
+  if ! (: </dev/tty) 2>/dev/null; then
+    echo "setup.sh: no terminal to ask on; re-run with --yes to replace it" >&2
+    return 1
+  fi
+  local answer
+  read -r -p "$1 Replace it with $2? [y/N] " answer </dev/tty || return 1
+  [[ $answer == [yY]* ]]
+}
+
+if (( want_emacs )); then
+  case $emacs_have:$emacs_route in
+    other:*)
+      say "skip" "$HOME/.local/bin/emacs exists and isn't pacman-home's or a distrobox export; left alone"
+      emacs_route= ;;
+    box:host)
+      if confirm_replace "~/.local/bin/emacs is the $BOX box's export." "emacs built for the host from pkgbuilds/emacs"; then
+        for name in emacs emacsclient; do
+          bin=$HOME/.local/bin/$name
+          [[ -e $bin ]] && grep -q '^# distrobox_binary$' "$bin" 2>/dev/null || continue
+          act "$bin, the $BOX box's export" "remove"
+          (( check )) || command rm -f "$bin"
+        done
+        emacs_have=none
+      else
+        say "keep" "$HOME/.local/bin/emacs, the $BOX box's export; --emacs=host --yes replaces it"
+        emacs_route=
+      fi ;;
+    host:box)
+      if confirm_replace "~/.local/bin/emacs is pacman-home's emacs-wayland, built for the host." "the $BOX box's emacs-wayland, exported"; then
+        act "emacs-wayland (pacman-home -R)" "remove"
+        (( check )) || "$PACMAN_HOME" -R emacs-wayland --noconfirm >/dev/null
+        emacs_have=none switching+=" emacs emacsclient"
+      else
+        say "keep" "pacman-home's emacs-wayland; --emacs=box --yes replaces it"
+        emacs_route=
+      fi ;;
+  esac
+fi
+if (( want_waypipe )); then
+  case $waypipe_have:$waypipe_route in
+    box:host)
+      if confirm_replace "~/.local/bin/waypipe isn't pacman-home's (the $BOX box's copy, or installed by hand)." "Arch Linux ARM's package relocated by pacman-home"; then
+        # install-waypipe.sh backs the file up itself before the install.
+        (( check )) && say "would back up" "$WAYPIPE -> $WAYPIPE.bak-<timestamp>"
+      else
+        say "keep" "$WAYPIPE, not pacman-home's; --waypipe=host --yes replaces it"
+        waypipe_route=
+      fi ;;
+    host:box)
+      if confirm_replace "~/.local/bin/waypipe is pacman-home's, relocated from Arch Linux ARM." "a copy of the $BOX box's waypipe"; then
+        act "waypipe (pacman-home -R)" "remove"
+        (( check )) || "$PACMAN_HOME" -R waypipe --noconfirm >/dev/null
+        switching+=" waypipe"
+      else
+        say "keep" "pacman-home's waypipe; --waypipe=box --yes replaces it"
+        waypipe_route=
+      fi ;;
+  esac
+fi
+# --emacs=host is --packages of emacs-wayland: all of them when --packages is bare, else one more.
+if [[ $emacs_route == host ]]; then
+  if (( ! want_packages )); then
+    want_packages=1 packages=emacs-wayland
+  elif [[ -n $packages && ,$packages, != *,emacs-wayland,* ]]; then
+    packages+=,emacs-wayland
+  fi
+fi
+
+# --- waypipe from Arch Linux ARM: --waypipe[=host] -------------------------------------------------
 # Only whether pacman-home has it; updating needs the network and Arch Linux ARM's databases, so
 # it is left to install-waypipe.sh.
 
-if (( want_waypipe )); then
+if (( want_waypipe )) && [[ $waypipe_route == host ]]; then
   ver=$("$SRC/bin/pacman-home" -Q waypipe 2>/dev/null | awk '{print $2}') || true
   if [[ -n $ver ]]; then
     say "ok" "waypipe $ver from Arch Linux ARM, in pacman-home's database"
@@ -335,8 +527,6 @@ fi
 # README.md#packages-for-the-host). pacman-home's database says what is installed, at which
 # version; a package missing or at another version is built with makepkg and installed with
 # pacman-home -U. Dependencies between the packages decide the order.
-
-PACMAN_HOME=$SRC/bin/pacman-home
 
 # pkgbuild_info DIR -- "name ver-rel dep dep..." from the PKGBUILD, read the way makepkg does
 pkgbuild_info() {
@@ -385,6 +575,11 @@ if (( want_packages )); then
     (( progress )) || die "dependency cycle among pkgbuilds: ${wanted[*]}"
   done
   for name in "${ordered[@]}"; do
+    # The box's emacs export (or a hand-installed emacs) sits where this package's symlink goes.
+    if [[ $name == emacs-wayland && $emacs_have != none && $emacs_have != host ]]; then
+      say "skip" "emacs-wayland: $HOME/.local/bin/emacs isn't pacman-home's (the $BOX box's export?); --emacs=host replaces it"
+      continue
+    fi
     have=$("$PACMAN_HOME" -Q "$name" 2>/dev/null | awk '{print $2}') || true
     if [[ $have == "${pkg_ver[$name]}" ]]; then
       say "ok" "$name $have, in pacman-home's database"
@@ -435,7 +630,7 @@ fi
 
 (( want_zsh )) && brew_ensure zsh
 
-# --- The arch box: --arch -------------------------------------------------------------------------
+# --- The arch box: --arch, --emacs=box, --waypipe=box ---------------------------------------------
 
 confirm_box() {
   (( yes )) && return 0
@@ -452,15 +647,39 @@ confirm_box() {
 }
 
 if (( want_arch )); then
+  have_box=0
   if [[ $box == "$BOX" ]] || podman container exists "$BOX" 2>/dev/null; then
     say "ok" "$BOX distrobox"
+    have_box=1
   elif (( check )); then
     act "$BOX distrobox from $IMAGE ($IMAGE_SIZE)" "create"
   elif confirm_box; then
     act "$BOX distrobox from $IMAGE" "create"
     "$DISTROBOX" create --yes --name "$BOX" --image "$IMAGE" --pre-init-hooks "$PRE_INIT_HOOK"
+    have_box=1
   else
     say "skip" "$BOX distrobox: not created"
+  fi
+
+  if [[ $emacs_route == box || $waypipe_route == box ]]; then
+    if [[ $box == "$BOX" ]]; then
+      in_box_part
+    elif (( have_box )); then
+      args=()
+      (( check )) && args+=(--check)
+      [[ $emacs_route == box ]] && args+=(--emacs=box)
+      [[ $waypipe_route == box ]] && args+=(--waypipe=box)
+      rc=0
+      "$DISTROBOX" enter "$BOX" -- env SFU_IN_BOX=1 FORCE="${FORCE:-}" \
+        SFU_SWITCHING="$( (( check )) && echo "$switching" )" bash "$SRC/setup.sh" "${args[@]}" || rc=$?
+      case $rc in
+        0) ;;
+        100) changed=1 ;;
+        *) die "the part inside the $BOX box failed (exit $rc)" ;;
+      esac
+    else
+      say "skip" "--emacs=box/--waypipe=box inside the $BOX box: it doesn't exist yet"
+    fi
   fi
 fi
 

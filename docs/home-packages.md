@@ -84,7 +84,8 @@ system may want one such rule; a rule beats a hand edit when it will recur.
   release and Arch's; waypipe runs because every box has libc, lz4 and zstd under the same
   names. The binaries are fine; they are host programs on a foreign PATH. The remedy, if wanted,
   is the pattern pacman-home itself uses: inside a container, re-exec on the host through
-  `distrobox-host-exec`.
+  `distrobox-host-exec`. Or the box route, `setup.sh --emacs=box`, whose exports run from the host
+  and from every box.
 - **A relocated package can still be stale in a way pacman doesn't see.** relocate rebuilds the
   mtree, so `pacman-home -Qkk` is clean, but the program's own version check (waypipe's remote
   end, say) is what notices an update; `install-waypipe.sh` compares with the mirror.

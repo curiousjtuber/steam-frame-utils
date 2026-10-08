@@ -28,7 +28,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--brew] [--zsh] [--waypipe] [--mise] [--packages[=NAME,...]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--brew] [--zsh] [--arch] [--emacs[=host|box]] [--waypipe[=host|box]] [--mise] [--packages[=NAME,...]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -52,7 +52,8 @@ Options add the rest, and each one also fixes only what's missing:
 | `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` in the block at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--arch` | creates the `arch` distrobox from `docker.io/menci/archlinuxarm:latest`, Arch Linux ARM, if it doesn't exist (see [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) for why that image, and for the pacman sandbox the box is created without). The image is about 0.7 GB and the first start takes a few minutes, so it says so and asks first; `--yes` skips the question |
-| `--waypipe` | waypipe for the host, Arch Linux ARM's package relocated under `~/.local` by `install-waypipe.sh` through `pacman-home`, when `pacman-home` doesn't have it, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). It doesn't update waypipe; `install-waypipe.sh` does |
+| `--emacs` | emacs from one of two sources (see [emacs and waypipe: host or box](#emacs-and-waypipe-host-or-box)). `=host`: `pkgbuilds/emacs/` built here and installed under `~/.local` by `pacman-home`, the same as `--packages=emacs-wayland`. `=box`: implies `--arch`; emacs-wayland, the pgtk build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin` (an export left by another box is replaced; anything else there is left alone). Bare, it keeps the route in place, host when there is none. Switching asks before replacing what is there; `--yes` answers |
+| `--waypipe` | waypipe for the host from one of two sources (same section), and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). `=host`, or `=arch`, its old name: Arch Linux ARM's package relocated under `~/.local` by `install-waypipe.sh` through `pacman-home`; it doesn't update waypipe, `install-waypipe.sh` does. `=box`: implies `--arch`; a copy of the box's `/usr/bin/waypipe`, the same package, which pacman in the box keeps current (`distrobox upgrade arch`) and a re-run refreshes. Bare and switching as for `--emacs` |
 | `--mise` | [mise](https://mise.jdx.dev) in `~/.local/bin` if it isn't there, `shell-init/mise.sh` in the `end` block of `~/.bashrc` and `~/.zshrc` unless the file activates mise already, and rust through it, `mise use -g rust`, for a Rust package in `pkgbuilds/` (see [mise](#mise)). It doesn't update the tools; `mise upgrade` does |
 | `--packages` | the packages in `pkgbuilds/`, built with makepkg and installed with `pacman-home`: each one `pacman-home` doesn't have at its PKGBUILD's version, in dependency order (see [Packages for the host](#packages-for-the-host)); `--packages=NAME,...` for some of them. A Rust package needs `--mise` for cargo |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
@@ -61,8 +62,29 @@ Options add the rest, and each one also fixes only what's missing:
 The rest of the setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
-What needs the host is refused there: `--tailscale`, `--brew`, `--zsh` and `--packages`, and
-`--arch` in any box but `arch`.
+What needs the host is refused there: `--tailscale`, `--brew`, `--zsh`, `--packages` and
+`--emacs=host`, and `--arch`, `--emacs=box` and `--waypipe=box` in any box but `arch`. From the
+host, the box's part of `--emacs=box` and `--waypipe=box` runs through `distrobox enter arch`.
+
+### emacs and waypipe: host or box
+
+Both come in two forms, and both forms put the same names in `~/.local/bin`, so one is in place
+at a time. The **host** route, the default, is `pacman-home`'s: emacs built from
+`pkgbuilds/emacs/` on the Frame itself, waypipe relocated from Arch Linux ARM's package (see
+[Packages for the host](#packages-for-the-host)). It needs no container to start, sees the
+Frame's own `/usr`, D-Bus and processes, and is updated by a rebuild (`--packages`) or by
+`install-waypipe.sh`; what it cannot do is run inside a distrobox, where the host's libraries
+aren't ([docs/home-packages.md](docs/home-packages.md)). The **box** route is the `arch`
+distrobox's: emacs-wayland installed there with `emacs` and `emacsclient` exported, waypipe
+copied out. Its emacs starts through `distrobox enter` and sees the box's `/usr`, but works from
+the host and from every box alike, and pacman in the box keeps both current.
+
+`setup.sh` reads which route is in place from the files themselves: `pacman-home` owns the host
+route's, the box's emacs is a distrobox export, its waypipe a plain copy nothing owns. A bare
+`--emacs` or `--waypipe` keeps what it finds and takes host when there is nothing; `=host` or
+`=box` against the other route asks before replacing it (`pacman-home -R`, or removing the exports
+or backing the copy up), `--yes` answers, and with no terminal the installed route stays.
+`--packages` skips emacs-wayland while the box's export is in place; `--emacs=host` is the switch.
 
 `bin/` and `shell-init/` are used from the checkout: `bin/` goes on `PATH`, and the rc files source
 `shell-init/`, so a `git pull` updates both. Other files are copied, not linked, so they keep
@@ -83,9 +105,12 @@ The whole of this on a new Frame, from a clone at `~/steam-frame-utils`:
 
 That is one run: `~/.local/bin` on `PATH`, distrobox, the cursor fix and the rc blocks; Homebrew
 with zsh and wl-clipboard; waypipe relocated from Arch Linux ARM; mise with rust; the packages in
-`pkgbuilds/`, pacman 7 and emacs, built here and installed under `~/.local`; Tailscale as a system service, which asks for sudo and then for a login in a
+`pkgbuilds/`, pacman 7 and emacs, built here and installed under `~/.local` (`--emacs=box
+--waypipe=box` in place of `--packages`'s emacs and `--waypipe` take the distrobox route instead,
+see [emacs and waypipe: host or box](#emacs-and-waypipe-host-or-box)); Tailscale as a system service, which asks for sudo and then for a login in a
 browser; and the fonts. The builds take about six minutes in all. The apps under `apps/` are
-separate installers, run by hand; `--arch` creates the arch distrobox, which nothing here needs.
+separate installers, run by hand; `--arch` creates the arch distrobox, which only the box route
+needs.
 Not in this repo: Steam's own settings, the emacs configuration, mise tools beyond rust, and
 anything written into `~/.bashrc` by hand.
 
@@ -193,8 +218,9 @@ sudo at all.
 Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
 works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than a
 distrobox, which starts it in about half the time, and so does wl-clipboard, which SteamOS lacks.
-emacs is built for the host from `pkgbuilds/emacs/`, and waypipe is Arch Linux ARM's package
-relocated there: Homebrew's emacs is terminal-only, and it has no waypipe.
+emacs is built for the host from `pkgbuilds/emacs/` or exported from the arch box, and waypipe is
+Arch Linux ARM's package, relocated or copied from that box: Homebrew's emacs is terminal-only,
+and it has no waypipe.
 
 `shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes in
 the block at the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of
@@ -352,8 +378,10 @@ moved under `~/.local` and installed into `pacman-home`'s database, so `pacman-h
 knows it and `pacman-home -R waypipe` removes it. A library the host lacks, a newer glibc among
 them, is reported before the install. A waypipe from before `pacman-home`, a bare binary in
 `~/.local/bin`, is backed up to `waypipe.bak-<timestamp>` first. The package signature isn't
-checked. The `arch` distrobox used to be the other source, a copy of its own waypipe; the
-relocated package is the same binary without the box.
+checked. `--waypipe=box` takes the other source: a copy of the `arch` box's `/usr/bin/waypipe`, the
+same package, which pacman in the box keeps current and a re-run of `setup.sh --waypipe` refreshes.
+`pacman-home -Qo ~/.local/bin/waypipe` says which is in place, and switching asks (see [emacs and
+waypipe: host or box](#emacs-and-waypipe-host-or-box)).
 
 `shell-init/waypipe.sh` wraps `waypipe` in a function. Game Mode is an X11 session: gamescope names
 its Wayland socket only in `GAMESCOPE_WAYLAND_DISPLAY` (`gamescope-0`), so a `waypipe` client
@@ -434,8 +462,9 @@ package can be built on the host itself, against the exact libraries it will run
 distrobox and no cross toolchain. `pkgbuilds/` holds PKGBUILDs configured with
 `--prefix=$HOME/.local`, so the result finds its data under `~/.local` instead of the read-only
 `/usr`. `pkgbuilds/emacs/` is Emacs with PGTK, a host build that sees the Frame's own `/usr`,
-D-Bus and processes, which the distrobox one does not. The header of each PKGBUILD says what it
-leaves out and why.
+D-Bus and processes, which the distrobox one does not; `setup.sh --emacs` (or `--packages`)
+builds and installs it, and `--emacs=box` is the distrobox alternative. The header of each
+PKGBUILD says what it leaves out and why.
 
 ```bash
 cd ~/steam-frame-utils/pkgbuilds/emacs && makepkg -f

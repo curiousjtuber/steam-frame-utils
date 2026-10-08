@@ -7,7 +7,7 @@
 # aarch64 build needs only libc, libgcc, lz4 and zstd, all of which SteamOS has, and nothing
 # outside its binary and man page, so `pacman-home relocate waypipe` moves its /usr tree under
 # ~/.local and installs it there, in pacman-home's own database: no root, and SteamOS updates
-# keep it. `setup.sh --waypipe` runs this when pacman-home doesn't have waypipe yet. See
+# keep it. `setup.sh --waypipe[=host]` runs this when pacman-home doesn't have waypipe yet. See
 # README.md#the-waypipe-function.
 #
 # pacman-home syncs Arch Linux ARM's package databases, about 10 MB, from one mirror (ALARM_MIRROR
