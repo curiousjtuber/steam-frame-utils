@@ -506,6 +506,11 @@ a package's dependencies are checked against the host's database and passed as
 `--assume-installed`; a dependency the host lacks is an error. `pacman-home -Q`, `-Ql`, `-Qo` and
 `-R` work as usual within that database.
 
+`pacman-home outdated` compares every installed package, by version, with Arch Linux ARM's
+repositories, with the AUR for one they lack, and with its PKGBUILD in `pkgbuilds/`, so a
+bump upstream shows up without a build. The release number after the dash is this repo's own and
+isn't compared; a packaging that tracks git, as Arch's pacman does, is marked as a snapshot.
+
 The pacman it runs is the host's until `pkgbuilds/pacman/` is installed. That is pacman 7 built
 for the prefix, with its programs under `~/.local/lib/pacman/bin` so that `pacman` on `PATH` keeps
 meaning the host's, and with `~/.local/etc/pacman.conf` and `~/.local/var/lib/pacman` as its

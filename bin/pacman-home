@@ -9,6 +9,11 @@
 #         pacman-home -R PKG                    remove one
 #         pacman-home check PKG...              which of a package's files fall outside ~/.local
 #                                               (-U refuses such a package)
+#         pacman-home outdated                  every installed package against Arch Linux ARM's
+#                                               repositories, or the AUR for one they lack, and
+#                                               against its PKGBUILD in pkgbuilds/, by version
+#                                               (the release number after the dash is this
+#                                               repo's own, so it isn't compared)
 #         pacman-home relocate NAME|FILE [--allow-missing-libs] [-U options]
 #                                               a stock binary package, its /usr tree moved under
 #                                               ~/.local, then installed: NAME is fetched from Arch
@@ -225,6 +230,47 @@ relocate_pkg() {
   printf '%s\n' "$out"
 }
 
+# --- outdated: installed versions against upstream and the PKGBUILDs -------------------------------
+
+outdated_cmd() {
+  local vercmp pkgbuilds name have up src pb newer
+  vercmp=$(dirname "$PACMAN")/vercmp
+  pkgbuilds=$(cd "$(dirname "$0")/../pkgbuilds" 2>/dev/null && pwd || true)
+  sync_alarm
+  printf '%-14s %-12s %-12s %s\n' package installed pkgbuild upstream
+  while read -r name have; do
+    have=${have%-*}
+    # Arch Linux ARM first, the AUR for a package its repositories lack.
+    up=$("$PACMAN" --config "$ALARM_CONF" -Si "$name" 2>/dev/null | awk -F': *' '/^Version/{print $2; exit}') || true
+    src="Arch Linux ARM"
+    if [[ -z $up ]]; then
+      up=$(curl -fsSL "https://aur.archlinux.org/rpc/v5/info?arg[]=$name" 2>/dev/null \
+        | jq -r '.results[0].Version // empty' 2>/dev/null) || true
+      src=AUR
+    fi
+    up=${up%-*}
+    pb=
+    if [[ -n $pkgbuilds ]]; then
+      for dir in "$pkgbuilds"/*/; do
+        [[ -f $dir/PKGBUILD ]] || continue
+        read -r pbname pbver < <(bash -c 'source "$1" >/dev/null 2>&1; printf "%s %s\n" "$pkgname" "$pkgver"' _ "$dir/PKGBUILD") || continue
+        [[ $pbname == "$name" ]] && pb=$pbver
+      done
+    fi
+    if [[ -z $up ]]; then
+      up="not found upstream"
+    elif [[ $("$vercmp" "$up" "$have") -gt 0 ]]; then
+      newer="newer: $up ($src"
+      [[ $up =~ \.r[0-9]+\.g[0-9a-f]+ ]] && newer+=", a git snapshot"
+      up="$newer)"
+    else
+      up="current ($src)"
+    fi
+    [[ -n $pb && $pb != "$have" ]] && pb+=" <- differs"
+    printf '%-14s %-12s %-12s %s\n' "$name" "$have" "${pb:--}" "$up"
+  done < <("$PACMAN" --config "$CONF" -Q 2>/dev/null)
+}
+
 relocate_cmd() {
   (( $# )) || die "relocate needs a package name or file"
   local src=$1 pkg out allow= rest=() arg; shift
@@ -243,6 +289,7 @@ relocate_cmd() {
 
 case $1 in
   check) shift; check_cmd "$@"; exit ;;
+  outdated) outdated_cmd; exit ;;
   relocate) shift; relocate_cmd "$@" ;;
 esac
 
