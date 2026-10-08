@@ -449,12 +449,16 @@ doesn't have at the PKGBUILD's version, in dependency order; a re-run builds not
 SteamOS update it rebuilds what you bump.
 
 Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
-fetches Arch's PKGBUILD for NAME, rewrites it for the prefix (the configure, cmake, meson and make
-prefix flags, `/usr` under `$pkgdir`, `aarch64` in `arch`, the rpath and pkg-config path for
-`~/.local/lib`), prints the diff, and says which `makedepends` the host lacks. Review it, then
-`makepkg -f` and `pacman-home -U`. The rewrite is the mechanical part: a build system that
-hardcodes `/usr` shows up afterwards as a file outside `~/.local`, which `pacman-home check PKG`
-lists and `pacman-home -U` refuses, and is fixed in the PKGBUILD by hand.
+fetches Arch's PKGBUILD for NAME, or the AUR's when Arch has none, rewrites it for the prefix (the
+configure, cmake, meson and make prefix flags, `/usr` under `$pkgdir`, `aarch64` in `arch`, the
+rpath and pkg-config path for `~/.local/lib`, and for a Rust package the rpath in `RUSTFLAGS`
+too), unlists the `makedepends` that mise provides, such as cargo, since makepkg checks them
+against the host's packages, prints the diff, and says which `makedepends` the host lacks.
+Review it, then `makepkg -f` and `pacman-home -U`; paru's PKGBUILD was homeify's output with no
+hand edit, while it was here ([docs/paru.md](docs/paru.md)). The rewrite is the mechanical part: a build system that hardcodes `/usr` shows up
+afterwards as a file outside `~/.local`, which `pacman-home check PKG` lists and `pacman-home -U`
+refuses, and is fixed in the PKGBUILD by hand, as `pkgbuilds/pacman/` and `pkgbuilds/emacs/`
+were, for features the host lacks and a layout that keeps out of the host's way.
 
 A program that needs no file outside its own tree, such as waypipe, needn't be built at all.
 `pacman-home relocate NAME` fetches Arch Linux ARM's binary package through pacman's own
@@ -466,6 +470,27 @@ from there (systemd and udev directories, polkit, system D-Bus services), and on
 the host cannot supply, a glibc or Qt newer than the host's included, since the loader names the
 symbol version it lacks; `--allow-missing-libs` installs anyway. What it cannot see is a program that looks for its data under `/usr` at
 run time; that one needs a build.
+
+### Which way in
+
+For a new program, in this order:
+
+1. **`pacman-home relocate NAME`, and run the program.** It is the whole job when the program
+   needs nothing outside its own tree. Relocate refuses a package with files outside `/usr` or in
+   the parts of `/usr` that only work from there, drops an install scriptlet, and refuses one whose
+   libraries the host lacks; what it cannot see is a program that looks for its data under
+   `/usr` at run time, which installs cleanly and then fails or falls back to defaults. So the
+   test is both: relocate accepts it, and the program works. waypipe passed; anything with data
+   files, plugins, schemas or Python modules is likely to fail the second part.
+2. **`pkgbuilds/homeify NAME`, then `makepkg -f` and `pacman-home -U`.** Often the whole job
+   too: jq and paru (while it was here) built from homeify's output as it came.
+3. **Edit the PKGBUILD where two signals say so.** homeify's closing list of `makedepends` the
+   host lacks is where emacs's libgccjit and tree-sitter showed up, and became features turned
+   off. `pacman-home -U` refusing a file outside `~/.local` after the build is where pacman's
+   bash completions showed up, and became a move in `package()`. Beyond those, a layout may
+   need deciding, as pacman's did to keep off `PATH`, and a quirk may show only when the
+   installed program runs, as emacs's launcher did. Record each decision in the PKGBUILD's
+   header; it is what the next SteamOS update will make you re-read.
 
 `bin/pacman-home` is pacman with a configuration written to `~/.local/etc/pacman.conf` that
 keeps the database, cache and log under `~/.local`; `relocate` uses a second one beside it that

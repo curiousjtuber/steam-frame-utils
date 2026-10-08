@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # steam-frame-utils: a stock Arch PKGBUILD rewritten for a ~/.local prefix, into pkgbuilds/NAME/.
 #
-# Usage:  pkgbuilds/homeify NAME          Arch's PKGBUILD for NAME, from gitlab.archlinux.org,
-#                                         with the files it lists alongside (patches, units)
+# Usage:  pkgbuilds/homeify NAME          Arch's PKGBUILD for NAME, from gitlab.archlinux.org, or
+#                                         the AUR's when Arch has none, with the files it lists
+#                                         alongside (patches, units)
 #         pkgbuilds/homeify NAME FILE     a PKGBUILD you already have
 #
 # The original is kept as PKGBUILD.upstream and the diff printed. The rewrite: the prefix given
@@ -11,7 +12,10 @@
 # added to arch;
 # makepkg's debug split and lto turned off; the install scriptlet dropped, since nothing runs it;
 # and PKG_CONFIG_PATH and an rpath for ~/.local/lib exported in build(), so packages built this
-# way find each other. It ends with the makedepends and depends the host lacks.
+# way find each other. A PKGBUILD that runs cargo gets the rpath in RUSTFLAGS too, since rustc
+# ignores LDFLAGS, and a makedepends that mise's shims provide (cargo, python, ...) is unlisted,
+# since makepkg checks them against the host's packages. It ends with the makedepends and
+# depends the host lacks.
 #
 # Review the result before building; this is the mechanical part. What a build system hardcodes
 # shows up afterwards as a file outside ~/.local, which `pacman-home check` lists and `pacman-home
@@ -29,27 +33,69 @@ name=$1 given=${2:-}
 [[ $name =~ ^[a-z0-9@._+-]+$ ]] || die "not a package name: $name"
 here=$(cd "$(dirname "$0")" && pwd)
 dir=$here/$name
-base=https://gitlab.archlinux.org/archlinux/packaging/packages/$name/-/raw/main
+arch_base=https://gitlab.archlinux.org/archlinux/packaging/packages/$name/-/raw/main
+aur_base=https://aur.archlinux.org/cgit/aur.git/plain
 mkdir -p "$dir"
 upstream=$dir/PKGBUILD.upstream
+from=
 
 if [[ -n $given ]]; then
   [[ -f $given ]] || die "no such file: $given"
   command cp -f "$given" "$upstream"
+  from=$given
 else
-  curl -fsSL -o "$upstream" "$base/PKGBUILD" \
-    || die "no PKGBUILD for $name at $base (Arch's packaging repos; the AUR isn't covered)"
+  # Arch's packaging repos first, the AUR when they have no such package. GitLab answers a
+  # missing project with a sign-in page and status 200, so the content is checked, not the status.
+  is_pkgbuild() { grep -qE '^pkg(name|base)=' "$1" 2>/dev/null; }
+  if curl -fsSL -o "$upstream" "$arch_base/PKGBUILD" 2>/dev/null && is_pkgbuild "$upstream"; then
+    from=$arch_base/PKGBUILD
+    src_url() { printf '%s/%s' "$arch_base" "$1"; }
+  elif curl -fsSL -o "$upstream" "$aur_base/PKGBUILD?h=$name" 2>/dev/null && is_pkgbuild "$upstream"; then
+    from="$aur_base/PKGBUILD?h=$name (the AUR)"
+    src_url() { printf '%s/%s?h=%s' "$aur_base" "$1" "$name"; }
+  else
+    die "no PKGBUILD for $name in Arch's packaging repos or the AUR"
+  fi
   # Files the PKGBUILD lists without a URL live next to it in the repo.
   while IFS= read -r src; do
-    [[ $src == *://* || $src == *::* ]] && continue
-    curl -fsSL -o "$dir/$src" "$base/$src" || die "can't fetch $src, listed in source=()"
+    [[ -z $src || $src == *://* || $src == *::* ]] && continue
+    curl -fsSL -o "$dir/$src" "$(src_url "$src")" || die "can't fetch $src, listed in source=()"
   done < <(bash -c 'source "$1" >/dev/null 2>&1; printf "%s\n" "${source[@]}"' _ "$upstream")
+fi
+
+# What the two conditional rules need to know.
+shims=$HOME/.local/share/mise/shims
+uses_cargo=0
+grep -qE '(^|[^[:alnum:]_])cargo( |$)' "$upstream" && uses_cargo=1
+from_mise=()
+while IFS= read -r d; do
+  d=${d%%[<>=]*}
+  [[ -z $d ]] && continue
+  if [[ -x $shims/$d ]] || { [[ $d == rust ]] && [[ -x $shims/cargo ]]; }; then from_mise+=("$d"); fi
+done < <(bash -c 'source "$1" >/dev/null 2>&1; printf "%s\n" "${makedepends[@]}"' _ "$upstream")
+build_exports='  # homeify: what is already under ~/.local is found at configure time and at run time.\
+  export PKG_CONFIG_PATH="$_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"\
+  export LDFLAGS="${LDFLAGS:-} -Wl,-rpath,$_prefix/lib"'
+if (( uses_cargo )); then
+  build_exports+='\
+  # homeify: rustc links through its own driver, so the rpath goes in RUSTFLAGS as well.\
+  export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,$_prefix/lib"'
+fi
+unlist=()
+if (( ${#from_mise[@]} )); then
+  unlist=(-e '0,/^[a-z_]+ *\(\) *\{/{/^[a-z_]+ *\(\) *\{/ i\
+# homeify: these makedepends come from mise'"'"'s shims (setup.sh --mise), not host packages, which\
+# is all makepkg checks; the build fails plainly without them.\
+for _d in '"${from_mise[*]}"'; do for _i in "${!makedepends[@]}"; do\
+  [[ ${makedepends[_i]} == "$_d" ]] && unset '"'"'makedepends[_i]'"'"'; done; done; unset _d _i\
+
+}')
 fi
 
 {
   cat <<HEADER
 # Rewritten for a \$HOME/.local prefix by steam-frame-utils' pkgbuilds/homeify on $(date +%F), from
-#   ${given:-$base/PKGBUILD}
+#   $from
 # The original is PKGBUILD.upstream. Built on the Frame host with makepkg and installed with
 # pacman-home; see README.md#packages-for-the-host.
 
@@ -75,17 +121,18 @@ options+=(!debug !lto)
     -e 's#"(\$\{?pkgdir\}?)"/(etc|var|opt)\b#"\1$_prefix"/\2#g' \
     -e 's#(\$\{?pkgdir\}?)/usr#\1$_prefix#g' \
     -e 's#(\$\{?pkgdir\}?)/(etc|var|opt)\b#\1$_prefix/\2#g' \
-    -e '/^build *\(\) *\{/ a\
-  # homeify: what is already under ~/.local is found at configure time and at run time.\
-  export PKG_CONFIG_PATH="$_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"\
-  export LDFLAGS="${LDFLAGS:-} -Wl,-rpath,$_prefix/lib"' \
+    -e "/^build *\\(\\) *\\{/ a\\
+$build_exports" \
+    "${unlist[@]}" \
     "$upstream"
 } > "$dir/PKGBUILD"
 bash -n "$dir/PKGBUILD" || die "the rewrite left $dir/PKGBUILD unparsable; see the diff"
 [[ -f $dir/.gitignore ]] || printf '%s\n' '# makepkg working files' src/ pkg/ '*.pkg.tar.*' \
   '*.tar.*' '*.zip' PKGBUILD.upstream > "$dir/.gitignore"
 
-echo "== $dir/PKGBUILD, against the original:"
+echo "== $dir/PKGBUILD, against the original (from $from):"
+(( uses_cargo )) && echo "   runs cargo: the rpath goes in RUSTFLAGS too"
+(( ${#from_mise[@]} )) && echo "   makedepends from mise, unlisted for makepkg: ${from_mise[*]}"
 diff -u "$upstream" "$dir/PKGBUILD" | sed -n '3,$p' || true
 
 echo
