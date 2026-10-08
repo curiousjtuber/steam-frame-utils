@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# steam-frame-utils: build the package in the current directory, or a named one under pkgbuilds/,
+# and install it with pacman-home; then offer to delete what the build left behind. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#packages-for-the-host
+#
+# Usage:  makepkg-home [NAME|DIR] [--clean | --keep] [-- MAKEPKG-OPTIONS]
+#
+# With no NAME, the current directory's PKGBUILD. The build artifacts are what the directory's
+# .gitignore covers (src/, pkg/, the package and the downloaded sources), less PKGBUILD.upstream,
+# homeify's copy of the original. After a successful install they are listed with their size and
+# deleted on a yes; --clean deletes without asking, --keep asks nothing and keeps them, and with
+# no terminal to ask on they are kept. Keep them while a PKGBUILD is being adjusted: makepkg -R
+# repackages from them in seconds. cargo, for a Rust package, comes from mise's shims, put after
+# the host's directories so a tool the host has stays the host's.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "makepkg-home: $*" >&2; exit 1; }
+say() { printf '%-10s %s\n' "$1" "${2//$HOME/\~}" >&2; }
+
+SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+PACMAN_HOME=$SRC/bin/pacman-home
+
+target= clean= extra=()
+while (( $# )); do
+  case $1 in
+    -h|--help) usage; exit 0 ;;
+    --clean) clean=yes ;;
+    --keep) clean=no ;;
+    --) shift; extra=("$@"); break ;;
+    -*) die "unknown option: $1 (makepkg options go after --)" ;;
+    *) [[ -z $target ]] || die "one package at a time"; target=$1 ;;
+  esac
+  shift
+done
+
+if [[ -z $target ]]; then
+  dir=$PWD
+elif [[ -d $target ]]; then
+  dir=$(cd "$target" && pwd)
+elif [[ -d $SRC/pkgbuilds/$target ]]; then
+  dir=$SRC/pkgbuilds/$target
+else
+  die "no directory $target, and no pkgbuilds/$target (have: $(ls "$SRC/pkgbuilds" | grep -v homeify | tr '\n' ' '))"
+fi
+[[ -f $dir/PKGBUILD ]] || die "no PKGBUILD in ${dir/#$HOME/\~}"
+[[ -x $PACMAN_HOME ]] || die "$PACMAN_HOME is missing"
+[[ -d $HOME/.local/share/mise/shims ]] && export PATH=$PATH:$HOME/.local/share/mise/shims
+
+cd "$dir"
+say "build" "$dir"
+MAKEFLAGS=${MAKEFLAGS:--j$(nproc)} makepkg -f "${extra[@]}" || die "makepkg failed in ${dir/#$HOME/\~}"
+mapfile -t built < <(makepkg --packagelist "${extra[@]}")
+(( ${#built[@]} )) || die "makepkg built nothing it will name"
+say "install" "${built[*]##*/}"
+"$PACMAN_HOME" -U "${built[@]}" --noconfirm || die "pacman-home -U failed"
+
+# The artifacts: the ignored files of this directory, which is what its .gitignore is for.
+if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  mapfile -t junk < <(git -C "$dir" clean -ndX -e '!PKGBUILD.upstream' . | sed 's/^Would remove //')
+else
+  mapfile -t junk < <(ls -d src pkg ./*.pkg.tar.* 2>/dev/null)
+fi
+(( ${#junk[@]} )) || exit 0
+size=$(du -shc "${junk[@]}" 2>/dev/null | tail -1 | cut -f1)
+echo "build artifacts in ${dir/#$HOME/\~}, $size: ${junk[*]}" >&2
+case $clean in
+  yes) ;;
+  no) say "keep" "them"; exit 0 ;;
+  *)
+    if ! (: </dev/tty) 2>/dev/null; then say "keep" "them (no terminal to ask on; --clean deletes)"; exit 0; fi
+    read -r -p "Delete them? [y/N] " answer </dev/tty || answer=
+    [[ $answer == [yY]* ]] || { say "keep" "them"; exit 0; } ;;
+esac
+if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "$dir" clean -fdqX -e '!PKGBUILD.upstream' .
+else
+  command rm -rf -- "${junk[@]}"
+fi
+say "deleted" "${junk[*]}"

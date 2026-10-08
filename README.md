@@ -18,6 +18,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 | `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
 | `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
+| `bin/makepkg-home` | builds one of `pkgbuilds/`, installs it with `pacman-home`, and offers to delete the build's leftovers (same section) |
 | `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md); [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found; [packages under `~/.local`](docs/home-packages.md), what each one took to get there; and [paru](docs/paru.md), tried on the home database and dropped |
 
 ## Setup
@@ -444,9 +445,13 @@ cd ~/steam-frame-utils/pkgbuilds/emacs && makepkg -f
 pacman-home -U emacs-wayland-*.pkg.tar.zst
 ```
 
-`setup.sh --packages` does the same for every directory under `pkgbuilds/` that `pacman-home`
-doesn't have at the PKGBUILD's version, in dependency order; a re-run builds nothing, and after a
-SteamOS update it rebuilds what you bump.
+`makepkg-home emacs` is those two commands, from any directory, followed by an offer to delete
+what the build left: `src/`, `pkg/`, the package and the downloaded sources, about half a gigabyte
+for emacs, listed with their size before the question (`--clean` deletes unasked, `--keep` asks
+nothing; homeify's `PKGBUILD.upstream` is kept either way). Keep them while a PKGBUILD is being
+adjusted, since `makepkg -R` repackages from them in seconds. `setup.sh --packages` builds every
+directory under `pkgbuilds/` that `pacman-home` doesn't have at the PKGBUILD's version, in
+dependency order; a re-run builds nothing, and after a SteamOS update it rebuilds what you bump.
 
 Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
 fetches Arch's PKGBUILD for NAME, or the AUR's when Arch has none, rewrites it for the prefix (the
