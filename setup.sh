@@ -3,7 +3,7 @@
 # changes what is missing or out of date.
 #
 # Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--arch] [--waypipe] [--mise]
-#                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+#                   [--packages[=NAME,...]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
 # that finds bin/podman, the Desktop Mode cursor fix, and, in ~/.bashrc and ~/.zshrc, this
@@ -26,6 +26,10 @@
 #                   ~/.zshrc (shell-init/mise.sh, unless the file activates mise already), and
 #                   rust through it (mise use -g rust), for a Rust package in pkgbuilds/, since
 #                   SteamOS carries no cargo. mise upgrade updates the tools.
+# --packages        the packages in pkgbuilds/ built with makepkg and installed with pacman-home,
+#                   each one that pacman-home doesn't have at the PKGBUILD's version, in dependency
+#                   order; =NAME,... for some of them. A Rust package needs cargo (--mise);
+#                   emacs's build takes about three minutes.
 # --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
 #                   of the tailscale alias in ~/.bashrc and ~/.zshrc; uses sudo.
 #                   --tailscale=trust also puts tailscale0 in firewalld's trusted zone.
@@ -35,8 +39,8 @@
 #                   update them.
 #
 # The host and its distroboxes share the home directory, so it also runs inside a distrobox,
-# except for what needs the host: --tailscale, --brew and --zsh always, and --arch from any box
-# but arch itself.
+# except for what needs the host: --tailscale, --brew, --zsh and --packages always, and --arch
+# from any box but arch itself.
 #
 # bin/ and shell-init/ are used from this checkout: bin/ goes on PATH, for shells and for
 # distrobox, and the rc files source shell-init/, so a git pull updates both; after moving the
@@ -65,7 +69,8 @@ IMAGE_SIZE="about 0.7 GB"
 # can be entered, so the sandbox is turned off ahead of it. See docs/arch-distrobox-images.md.
 PRE_INIT_HOOK="sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf"
 
-check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_waypipe=0 want_mise=0
+check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_waypipe=0 want_mise=0 want_packages=0
+packages=
 tailscale=
 nerd_fonts=
 for arg in "$@"; do
@@ -77,6 +82,8 @@ for arg in "$@"; do
     --arch) want_arch=1 ;;
     --waypipe) want_waypipe=1 ;;
     --mise) want_mise=1 ;;
+    --packages) want_packages=1 ;;
+    --packages=?*) want_packages=1 packages=${arg#*=} ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
     --nerd-fonts) nerd_fonts=JetBrainsMono,NerdFontsSymbolsOnly ;;
@@ -202,6 +209,8 @@ if [[ -n $box ]]; then
       "run it there, not in the $box box"
   (( ! want_arch )) || [[ $box == "$BOX" ]] \
     || die "--arch needs the host or the $BOX box, not the $box box"
+  (( ! want_packages )) \
+    || die "--packages builds against the host's libraries; run it there, not in the $box box"
 fi
 
 # bin/podman and distrobox's exports have to win even when the caller's PATH lacks them, as it
@@ -319,6 +328,75 @@ if (( want_mise )); then
     act "rust through mise (mise use -g rust), for cargo" "install"
     (( check )) || (cd && "$MISE" use -g rust)
   fi
+fi
+
+# --- The packages under ~/.local: --packages[=NAME,...] ---------------------------------------------
+# One directory per package under pkgbuilds/, each a PKGBUILD for a ~/.local prefix (see
+# README.md#packages-for-the-host). pacman-home's database says what is installed, at which
+# version; a package missing or at another version is built with makepkg and installed with
+# pacman-home -U. Dependencies between the packages decide the order.
+
+PACMAN_HOME=$SRC/bin/pacman-home
+
+# pkgbuild_info DIR -- "name ver-rel dep dep..." from the PKGBUILD, read the way makepkg does
+pkgbuild_info() {
+  bash -c 'source "$1/PKGBUILD" >/dev/null 2>&1 || exit 1
+    printf "%s %s-%s" "$pkgname" "$pkgver" "$pkgrel"
+    for d in "${depends[@]}"; do printf " %s" "${d%%[<>=]*}"; done; echo' _ "$1"
+}
+
+if (( want_packages )); then
+  [[ -x $PACMAN_HOME ]] || die "$PACMAN_HOME is missing"
+  # cargo, for a Rust package, comes from mise's shims; they go after the host's directories so that a
+  # tool the host has (meson, for one) is still the host's.
+  [[ -d $HOME/.local/share/mise/shims ]] && export PATH=$PATH:$HOME/.local/share/mise/shims
+  declare -A pkg_dir pkg_ver pkg_deps
+  for dir in "$SRC"/pkgbuilds/*/; do
+    [[ -f $dir/PKGBUILD ]] || continue
+    read -r name ver deps < <(pkgbuild_info "${dir%/}") \
+      || die "can't read $dir/PKGBUILD"
+    pkg_dir[$name]=${dir%/} pkg_ver[$name]=$ver pkg_deps[$name]=$deps
+  done
+  wanted=()
+  if [[ -n $packages ]]; then
+    for name in ${packages//,/ }; do
+      [[ -n ${pkg_dir[$name]:-} ]] || die "no pkgbuilds/*/PKGBUILD names $name (have: ${!pkg_dir[*]})"
+      wanted+=("$name")
+    done
+  else
+    wanted=("${!pkg_dir[@]}")
+  fi
+  # Dependency order: a package goes after any wanted package it depends on.
+  ordered=()
+  while (( ${#wanted[@]} )); do
+    progress=0
+    for name in "${wanted[@]}"; do
+      ready=1
+      for dep in ${pkg_deps[$name]}; do
+        for other in "${wanted[@]}"; do [[ $dep == "$other" ]] && ready=0; done
+      done
+      if (( ready )); then
+        ordered+=("$name") progress=1
+        rest=(); for other in "${wanted[@]}"; do [[ $other == "$name" ]] || rest+=("$other"); done
+        wanted=("${rest[@]}")
+        break
+      fi
+    done
+    (( progress )) || die "dependency cycle among pkgbuilds: ${wanted[*]}"
+  done
+  for name in "${ordered[@]}"; do
+    have=$("$PACMAN_HOME" -Q "$name" 2>/dev/null | awk '{print $2}') || true
+    if [[ $have == "${pkg_ver[$name]}" ]]; then
+      say "ok" "$name $have, in pacman-home's database"
+      continue
+    fi
+    act "$name ${pkg_ver[$name]}${have:+, replacing $have} (makepkg in ${pkg_dir[$name]#$SRC/}, pacman-home -U)" "build"
+    (( check )) && continue
+    ( cd "${pkg_dir[$name]}" && MAKEFLAGS=${MAKEFLAGS:--j$(nproc)} makepkg -f ) \
+      || die "makepkg failed in ${pkg_dir[$name]#$SRC/}"
+    mapfile -t built < <(cd "${pkg_dir[$name]}" && makepkg --packagelist)
+    "$PACMAN_HOME" -U "${built[@]}" --noconfirm || die "pacman-home -U failed for $name"
+  done
 fi
 
 # --- Homebrew: --brew, --zsh -------------------------------------------------------------------

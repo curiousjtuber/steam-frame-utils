@@ -27,7 +27,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--brew] [--zsh] [--waypipe] [--mise] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--brew] [--zsh] [--waypipe] [--mise] [--packages[=NAME,...]] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -53,14 +53,15 @@ Options add the rest, and each one also fixes only what's missing:
 | `--arch` | creates the `arch` distrobox from `docker.io/menci/archlinuxarm:latest`, Arch Linux ARM, if it doesn't exist (see [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) for why that image, and for the pacman sandbox the box is created without). The image is about 0.7 GB and the first start takes a few minutes, so it says so and asks first; `--yes` skips the question |
 | `--waypipe` | waypipe for the host, Arch Linux ARM's package relocated under `~/.local` by `install-waypipe.sh` through `pacman-home`, when `pacman-home` doesn't have it, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). It doesn't update waypipe; `install-waypipe.sh` does |
 | `--mise` | [mise](https://mise.jdx.dev) in `~/.local/bin` if it isn't there, `shell-init/mise.sh` in the `end` block of `~/.bashrc` and `~/.zshrc` unless the file activates mise already, and rust through it, `mise use -g rust`, for a Rust package in `pkgbuilds/` (see [mise](#mise)). It doesn't update the tools; `mise upgrade` does |
+| `--packages` | the packages in `pkgbuilds/`, built with makepkg and installed with `pacman-home`: each one `pacman-home` doesn't have at its PKGBUILD's version, in dependency order (see [Packages for the host](#packages-for-the-host)); `--packages=NAME,...` for some of them. A Rust package needs `--mise` for cargo |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
 The rest of the setup, such as mise and tmux, is personal and not part of this.
 
 The host and its distroboxes share the home directory, so `setup.sh` runs inside a distrobox too.
-What needs the host is refused there: `--tailscale`, `--brew` and `--zsh`, and `--arch` in any box
-but `arch`.
+What needs the host is refused there: `--tailscale`, `--brew`, `--zsh` and `--packages`, and
+`--arch` in any box but `arch`.
 
 `bin/` and `shell-init/` are used from the checkout: `bin/` goes on `PATH`, and the rc files source
 `shell-init/`, so a `git pull` updates both. Other files are copied, not linked, so they keep
@@ -69,6 +70,23 @@ first. Inserted text sits between
 `# >>> steam-frame-utils: <name> >>>` and `# <<< … <<<` markers, and a re-run replaces it in place;
 edit the source here, not the copy. A shell-init file isn't inserted into an rc file that already
 defines the same alias or function some other way.
+
+
+## A fresh Frame
+
+The whole of this on a new Frame, from a clone at `~/steam-frame-utils`:
+
+```bash
+~/steam-frame-utils/setup.sh --brew --zsh --waypipe --mise --packages --tailscale=trust --nerd-fonts
+```
+
+That is one run: `~/.local/bin` on `PATH`, distrobox, the cursor fix and the rc blocks; Homebrew
+with zsh and wl-clipboard; waypipe relocated from Arch Linux ARM; mise with rust; the packages in
+`pkgbuilds/`, pacman 7 and emacs, built here and installed under `~/.local`; Tailscale as a system service, which asks for sudo and then for a login in a
+browser; and the fonts. The builds take about six minutes in all. The apps under `apps/` are
+separate installers, run by hand; `--arch` creates the arch distrobox, which nothing here needs.
+Not in this repo: Steam's own settings, the emacs configuration, mise tools beyond rust, and
+anything written into `~/.bashrc` by hand.
 
 ## Tailscale
 
@@ -425,6 +443,10 @@ cd ~/steam-frame-utils/pkgbuilds/emacs && makepkg -f
 ```bash
 pacman-home -U emacs-wayland-*.pkg.tar.zst
 ```
+
+`setup.sh --packages` does the same for every directory under `pkgbuilds/` that `pacman-home`
+doesn't have at the PKGBUILD's version, in dependency order; a re-run builds nothing, and after a
+SteamOS update it rebuilds what you bump.
 
 Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
 fetches Arch's PKGBUILD for NAME, rewrites it for the prefix (the configure, cmake, meson and make
