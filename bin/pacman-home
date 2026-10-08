@@ -25,6 +25,11 @@
 # that adds Arch Linux ARM's repositories; the plain one has none, so that -U never pulls a /usr
 # package from them to satisfy a dependency.
 #
+# The pacman run is the host's until pkgbuilds/pacman is installed; then it is that one, under
+# ~/.local/lib/pacman/bin, whose compiled-in defaults are these very paths (so it needs no
+# --config when run by hand), which skips the ldconfig run that fails on the read-only
+# root, and whose libalpm is current. Host packages are always looked up with the host's pacman.
+#
 # This database knows only what it installed itself, not the host's packages, so for -U the
 # package's dependencies are checked against the host's database and the satisfied ones are
 # passed as --assume-installed. A dependency the host lacks is still an error, and a dependency
@@ -57,7 +62,9 @@ ALARM_CONF=$LOCAL/etc/pacman-alarm.conf
 ALARM_MIRROR=${ALARM_MIRROR:-https://fl.us.mirror.archlinuxarm.org}
 CACHE=$LOCAL/var/cache/pacman/pkg
 HOST_PACMAN=/usr/bin/pacman
+LOCAL_PACMAN=$LOCAL/lib/pacman/bin/pacman
 PACMAN=$HOST_PACMAN
+[[ -x $LOCAL_PACMAN ]] && PACMAN=$LOCAL_PACMAN
 
 mkdir -p "$LOCAL/var/lib/pacman" "$CACHE" "$LOCAL/var/log" \
   "$LOCAL/etc/pacman.d/hooks" "$LOCAL/etc/pacman.d/gnupg"
@@ -76,6 +83,9 @@ HookDir  = $LOCAL/etc/pacman.d/hooks
 GPGDir   = $LOCAL/etc/pacman.d/gnupg
 LocalFileSigLevel = Optional
 CONF
+# pacman 7 runs downloads in a Landlock sandbox, and the Frame kernel has no Landlock; the host's
+# pacman 6 would not know the directive.
+[[ $PACMAN == "$LOCAL_PACMAN" ]] && echo "DisableSandboxFilesystem" >> "$CONF"
 # Arch Linux ARM's keyring isn't in that GPGDir, so its packages are taken on the database's
 # checksum alone, which pacman still verifies.
 cat > "$ALARM_CONF" <<CONF

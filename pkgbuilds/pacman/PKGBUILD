@@ -1,0 +1,79 @@
+# pacman 7 for ~/.local on the Frame host: a pacman whose compiled-in defaults are pacman-home's
+# layout, and a current libalpm.
+#
+# The host's pacman is 6.1 with libalpm.so.14; current libalpm is .so.16, which anything linking
+# it (paru did, while it was here) wants. Built with
+# sysconfdir and localstatedir under the prefix, this pacman reads ~/.local/etc/pacman.conf and
+# ~/.local/var/lib/pacman by default, which is where pacman-home keeps its configuration and
+# database, so it needs no --config. It is not on PATH as `pacman`: its programs go under
+# ~/.local/lib/pacman/bin, so `pacman` keeps meaning the host's, and pacman-home runs this
+# one by its path. libalpm, its headers and pkg-config file land under ~/.local as usual.
+#
+# Build on the Frame (a minute or two), then install with pacman-home, which switches to it:
+#   makepkg -f && pacman-home -U pacman-*.pkg.tar.zst
+#
+# Documentation is off (the host has no asciidoc or doxygen). The pacman.conf and makepkg.conf
+# the build installs are left out: pacman-home writes the former, and the host's makepkg stays
+# the one on PATH. ldconfig is pointed at a path that does not exist, so this pacman skips the
+# ldconfig run that fails on the read-only root after every transaction. The Frame kernel has no
+# Landlock, which pacman 7's download sandbox needs; pacman-home's configuration disables it.
+
+pkgname=pacman
+pkgver=7.1.0
+pkgrel=1
+pkgdesc='Package manager, libalpm and makepkg, built for ~/.local on the Steam Frame host'
+arch=('aarch64' 'x86_64')
+url='https://www.archlinux.org/pacman/'
+license=(GPL-2.0-or-later)
+depends=(
+  bash
+  coreutils
+  curl
+  gawk
+  gettext
+  gnupg
+  gpgme
+  grep
+  libarchive
+  openssl
+)
+makedepends=(meson ninja)
+provides=(libalpm.so)
+options=(!debug !lto)
+source=(https://gitlab.archlinux.org/pacman/pacman/-/releases/v${pkgver}/downloads/pacman-${pkgver}.tar.xz)
+b2sums=('ebeeda3372e908083ad1eeae1452ddcac4dd3b7c2f8ffda2ff8e972bed53a6f97e9dfdd6bc965dec33e7c40387cf9394947301dbe3adf926f9860878bc2c9012')
+
+_prefix=$HOME/.local
+
+build() {
+  cd pacman-${pkgver}
+  export LDFLAGS="${LDFLAGS:-} -Wl,-rpath,$_prefix/lib"
+  meson setup build \
+    --prefix="$_prefix" \
+    --bindir=lib/pacman/bin \
+    --sbindir=lib/pacman/bin \
+    --sysconfdir="$_prefix/etc" \
+    --localstatedir="$_prefix/var" \
+    --buildtype=plain \
+    -Ddoc=disabled \
+    -Ddoxygen=disabled \
+    -Dscriptlet-shell=/usr/bin/bash \
+    -Dldconfig="$_prefix/lib/pacman/no-ldconfig" \
+    -Dpkg-ext=.pkg.tar.zst
+  meson compile -C build
+}
+
+package() {
+  cd pacman-${pkgver}
+  meson install -C build --destdir "$pkgdir"
+  command rm -f "$pkgdir$_prefix/etc/pacman.conf" "$pkgdir$_prefix/etc/makepkg.conf"
+  rmdir --ignore-fail-on-non-empty "$pkgdir$_prefix/etc"
+  # meson takes the bash completion directory from the system's bash-completion.pc, outside
+  # the prefix; the host's shells complete pacman anyway, so these go under the prefix with
+  # the rest.
+  if [[ -d $pkgdir/usr/share/bash-completion ]]; then
+    mkdir -p "$pkgdir$_prefix/share"
+    command mv -f "$pkgdir/usr/share/bash-completion" "$pkgdir$_prefix/share/"
+    rmdir -p --ignore-fail-on-non-empty "$pkgdir/usr/share"
+  fi
+}

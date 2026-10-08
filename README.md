@@ -16,7 +16,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
-| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix; `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
+| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/pacman/` is pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
 | `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
 | `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md), and [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found |
 
@@ -445,3 +445,12 @@ ownership it sets is faked, so the files are yours. Its database knows only what
 a package's dependencies are checked against the host's database and passed as
 `--assume-installed`; a dependency the host lacks is an error. `pacman-home -Q`, `-Ql`, `-Qo` and
 `-R` work as usual within that database.
+
+The pacman it runs is the host's until `pkgbuilds/pacman/` is installed. That is pacman 7 built
+for the prefix, with its programs under `~/.local/lib/pacman/bin` so that `pacman` on `PATH` keeps
+meaning the host's, and with `~/.local/etc/pacman.conf` and `~/.local/var/lib/pacman` as its
+compiled-in defaults, so run by its path it reads the home database with no `--config`. Its
+libalpm is current, libalpm.so.16 where the host's pacman 6.1 carries .so.14, for anything built
+against libalpm. It also skips the ldconfig run that the host's pacman attempts after every
+transaction and that fails on the read-only root. `pacman-home` switches to it as soon as it is
+installed and still looks host packages up with the host's.
