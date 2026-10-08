@@ -10,7 +10,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `install-waypipe.sh` | waypipe for the host: Arch Linux ARM's package, relocated under `~/.local` by `pacman-home`, no root needed (see [The waypipe function](#the-waypipe-function)) |
-| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, BSManager and Full Keyboard (see [Apps](#apps)) |
+| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, Deskflow, BSManager and Full Keyboard (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, mise, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
@@ -262,6 +262,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | `install-stream-frame.sh [--yes]` | [Stream Frame](https://streamframe.app), for watching, recording and screenshotting the headset from another device | Flatpak `com.boxtree.StreamFrame`, system-wide, from Boxtree's repo; uses sudo |
 | `install-moonlight.sh [--yes]` | [Moonlight](https://moonlight-stream.org), for streaming games from a Sunshine or GeForce Experience host | Flatpak `com.moonlight_stream.Moonlight`, system-wide, from Flathub; uses sudo |
 | `install-krdc.sh [--yes]` | [KRDC](https://apps.kde.org/krdc), KDE's RDP and VNC client, for a Plasma desktop shared with KRdp | Flatpak `org.kde.krdc`, system-wide, from Flathub; uses sudo |
+| `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 | `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
 
@@ -281,6 +282,13 @@ re-run updates. The header comment of each has the details and the uninstall ste
   PC, run `krdpserver` with `--plasma` (a systemd drop-in for `app-org.kde.krdpserver.service`):
   without it, KRdp goes through the desktop portal, whose permission prompt shows on the PC's
   screen, and KRDC gets a blank blue screen until someone answers it there.
+- **Deskflow** makes the Frame a client of the PC's mouse and keyboard, with no streaming: the
+  pointer crosses an edge of the PC's screen into the Frametop desktop. Run it on the host. It
+  uses the KDE runtime 6.11 that Moonlight already installs. On Wayland the client injects input
+  through the RemoteDesktop portal, the route KRdp takes into the nested KWin, so it works where
+  krdpd does. The first start asks once in the headset to allow remote control, and Deskflow
+  keeps the portal's restore token, so later starts don't ask. The PC side, the server, needs
+  the InputCapture portal; Plasma 6.7 offers it.
 - **BSManager** runs the fork's own `install.sh` from its latest release, passing on
   `--uninstall` and `--appimage FILE`. After that, BSManager updates itself.
 - **Full Keyboard** is a separate app, not a replacement for the system keyboard: start it from
