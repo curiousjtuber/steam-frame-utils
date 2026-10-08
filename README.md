@@ -18,7 +18,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 | `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
 | `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
-| `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md), and [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found |
+| `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md); [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found; [packages under `~/.local`](docs/home-packages.md), what each one took to get there; and [paru](docs/paru.md), tried on the home database and dropped |
 
 ## Setup
 
@@ -491,6 +491,9 @@ For a new program, in this order:
    need deciding, as pacman's did to keep off `PATH`, and a quirk may show only when the
    installed program runs, as emacs's launcher did. Record each decision in the PKGBUILD's
    header; it is what the next SteamOS update will make you re-read.
+
+[docs/home-packages.md](docs/home-packages.md) records which way each package so far went in,
+and what it took.
 
 `bin/pacman-home` is pacman with a configuration written to `~/.local/etc/pacman.conf` that
 keeps the database, cache and log under `~/.local`; `relocate` uses a second one beside it that
