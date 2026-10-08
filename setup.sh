@@ -2,7 +2,7 @@
 # Set up a Steam Frame's user environment from this repo, as the steamos user. Re-running it only
 # changes what is missing or out of date.
 #
-# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--arch] [--waypipe]
+# Usage:  ./setup.sh [--check] [--yes] [--brew] [--zsh] [--arch] [--waypipe] [--mise]
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
@@ -22,6 +22,10 @@
 #                   install-waypipe.sh through pacman-home, when pacman-home doesn't have it
 #                   (re-run that script to update it), and the Game Mode waypipe function in
 #                   ~/.bashrc and ~/.zshrc.
+# --mise            mise in ~/.local/bin if it isn't there, its activation in ~/.bashrc and
+#                   ~/.zshrc (shell-init/mise.sh, unless the file activates mise already), and
+#                   rust through it (mise use -g rust), for a Rust package in pkgbuilds/, since
+#                   SteamOS carries no cargo. mise upgrade updates the tools.
 # --tailscale       also fix what's missing of tailscaled (binaries, unit, enabled, running) and
 #                   of the tailscale alias in ~/.bashrc and ~/.zshrc; uses sudo.
 #                   --tailscale=trust also puts tailscale0 in firewalld's trusted zone.
@@ -61,7 +65,7 @@ IMAGE_SIZE="about 0.7 GB"
 # can be entered, so the sandbox is turned off ahead of it. See docs/arch-distrobox-images.md.
 PRE_INIT_HOOK="sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf"
 
-check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_waypipe=0
+check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_waypipe=0 want_mise=0
 tailscale=
 nerd_fonts=
 for arg in "$@"; do
@@ -72,6 +76,7 @@ for arg in "$@"; do
     --zsh) want_zsh=1 want_brew=1 ;;
     --arch) want_arch=1 ;;
     --waypipe) want_waypipe=1 ;;
+    --mise) want_mise=1 ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
     --nerd-fonts) nerd_fonts=JetBrainsMono,NerdFontsSymbolsOnly ;;
@@ -291,6 +296,31 @@ if (( want_waypipe )); then
   fi
 fi
 
+# --- mise, and rust through it: --mise ------------------------------------------------------------
+# mise's installer puts a single binary in ~/.local/bin; the tools it installs go under
+# ~/.local/share/mise, with shims in ~/.local/share/mise/shims, so all of it survives SteamOS
+# updates and works in the distroboxes too, which share the home directory. Rust is the one tool
+# a build here may need: cargo for a Rust package. Which version is mise's business (`latest`, kept current by
+# `mise upgrade`); setup.sh only asks whether cargo resolves.
+
+MISE=$HOME/.local/bin/mise
+
+if (( want_mise )); then
+  if [[ -x $MISE ]]; then
+    say "ok" "mise $("$MISE" --version 2>/dev/null | cut -d' ' -f1)"
+  else
+    act "mise into ~/.local/bin" "install"
+    (( check )) || curl -fsSL https://mise.run | MISE_INSTALL_PATH=$MISE sh >/dev/null
+  fi
+  # From $HOME, so that the global config answers rather than some project's .mise.toml.
+  if [[ -x $MISE ]] && (cd && "$MISE" which cargo >/dev/null 2>&1); then
+    say "ok" "rust $(cd && "$MISE" exec -- rustc --version 2>/dev/null | cut -d' ' -f2) through mise"
+  else
+    act "rust through mise (mise use -g rust), for cargo" "install"
+    (( check )) || (cd && "$MISE" use -g rust)
+  fi
+fi
+
 # --- Homebrew: --brew, --zsh -------------------------------------------------------------------
 # The default prefix, since Homebrew's bottles are built for it; elsewhere everything builds from
 # source. /home survives SteamOS updates.
@@ -437,6 +467,7 @@ declare -A INIT_PATTERNS=(
   [brew]='^[^#]*brew shellenv'
   [waypipe]='^[[:space:]]*(function[[:space:]]+waypipe|waypipe[[:space:]]*\(\))'
   [tailscale]='^[[:space:]]*alias tailscale='
+  [mise]='^[^#]*mise activate'
 )
 
 # block_has_init RC INIT -- a block of RC sources shell-init/INIT.sh, or holds its text inline, as
@@ -496,7 +527,7 @@ for rc in "${rcs[@]}"; do
   # frametop is a no-op outside a Frametop desktop's terminal, so it always goes in. bin comes
   # after brew, to go ahead of it in PATH; ~/.local/bin, added further down, goes ahead of both.
   init_block "$rc" top top brew "$want_brew" frametop 1 bin 1
-  init_block "$rc" end end waypipe "$want_waypipe" tailscale "$want_ts_init"
+  init_block "$rc" end end waypipe "$want_waypipe" tailscale "$want_ts_init" mise "$want_mise"
   if [[ -f $rc ]]; then
     for old in $(sed -n 's/^# >>> steam-frame-utils: \(.*\) >>>$/\1/p' "$rc"); do
       [[ $old == top || $old == end ]] || remove_block "$rc" "$old"

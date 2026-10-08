@@ -11,7 +11,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `install-waypipe.sh` | waypipe for the host: Arch Linux ARM's package, relocated under `~/.local` by `pacman-home`, no root needed (see [The waypipe function](#the-waypipe-function)) |
 | `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, BSManager and Full Keyboard (see [Apps](#apps)) |
-| `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
+| `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, mise, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
@@ -27,7 +27,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 ```bash
-~/steam-frame-utils/setup.sh [--brew] [--zsh] [--waypipe] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
+~/steam-frame-utils/setup.sh [--brew] [--zsh] [--waypipe] [--mise] [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 ```
 
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
@@ -52,6 +52,7 @@ Options add the rest, and each one also fixes only what's missing:
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--arch` | creates the `arch` distrobox from `docker.io/menci/archlinuxarm:latest`, Arch Linux ARM, if it doesn't exist (see [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) for why that image, and for the pacman sandbox the box is created without). The image is about 0.7 GB and the first start takes a few minutes, so it says so and asks first; `--yes` skips the question |
 | `--waypipe` | waypipe for the host, Arch Linux ARM's package relocated under `~/.local` by `install-waypipe.sh` through `pacman-home`, when `pacman-home` doesn't have it, and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). It doesn't update waypipe; `install-waypipe.sh` does |
+| `--mise` | [mise](https://mise.jdx.dev) in `~/.local/bin` if it isn't there, `shell-init/mise.sh` in the `end` block of `~/.bashrc` and `~/.zshrc` unless the file activates mise already, and rust through it, `mise use -g rust`, for a Rust package in `pkgbuilds/` (see [mise](#mise)). It doesn't update the tools; `mise upgrade` does |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
@@ -281,7 +282,7 @@ shell start. `setup.sh` refuses a path with `"`, `$`, `` ` ``, `\`, `|` or `&` i
 | Block | Files |
 |---|---|
 | `top`, at the start of the file | `brew.sh` with `--brew` (see [Homebrew](#homebrew)), and `frametop.sh` and `bin.sh` always |
-| `end`, at the end of the file | `waypipe.sh` with `--waypipe`, and `tailscale.sh` with `--tailscale` |
+| `end`, at the end of the file | `waypipe.sh` with `--waypipe`, `tailscale.sh` with `--tailscale`, and `mise.sh` with `--mise` (see [mise](#mise)) |
 
 `bin.sh` puts this checkout's `bin/` on `PATH`, ahead of Homebrew and behind `~/.local/bin`, which
 the rc file puts first further down. It finds the checkout from its own path (`BASH_SOURCE` in
@@ -294,6 +295,17 @@ earlier versions, one per file or with the files' text inline, gets them replace
 The bare host and its distroboxes share one home directory, so the same blocks run in all of them.
 The containers read the same `~/.bashrc`, so any host-only line added there outside these blocks
 runs inside every distrobox too. Put such checks in a `shell-init/` file instead.
+
+### mise
+
+`shell-init/mise.sh` runs `mise activate` for the running shell, bash or zsh, so the tools mise
+manages are on `PATH` in every shell: rust, for a Rust package in `pkgbuilds/`, and whatever
+else `mise use -g` added. It skips itself when `~/.local/bin/mise` is missing, or when mise is
+active already (`MISE_SHELL` is set), and `setup.sh` leaves an rc file alone that activates mise
+on a line of its own. `setup.sh --mise` installs mise with its own installer, one binary in
+`~/.local/bin`, and `mise use -g rust` when cargo doesn't resolve; the version is mise's business
+(`latest`), and `mise upgrade` keeps it current. The tools live under `~/.local/share/mise`, so
+SteamOS updates keep them.
 
 ### The tailscale alias
 
