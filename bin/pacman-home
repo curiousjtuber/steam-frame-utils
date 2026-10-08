@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# steam-frame-utils: pacman for packages that live under ~/.local: the ones built from pkgbuilds/,
+# and stock binary packages relocated there. Its database, cache and log live under ~/.local too,
+# so the Frame's read-only root is never touched and no root is needed. Details:
+# https://github.com/curiousjtuber/steam-frame-utils#packages-for-the-host
+#
+# Usage:  pacman-home -U PKG.pkg.tar.zst       install or upgrade a package built from pkgbuilds/
+#         pacman-home -Q [-l PKG | -o FILE]     what is installed, a package's files, a file's owner
+#         pacman-home -R PKG                    remove one
+#         pacman-home check PKG...              which of a package's files fall outside ~/.local
+#                                               (-U refuses such a package)
+#         pacman-home relocate NAME|FILE [--allow-missing-libs] [-U options]
+#                                               a stock binary package, its /usr tree moved under
+#                                               ~/.local, then installed: NAME is fetched from Arch
+#                                               Linux ARM (ALARM_MIRROR overrides the mirror),
+#                                               FILE is a package you have. Refused when the host
+#                                               lacks a library it needs, unless told to allow it
+#         any other pacman operation and options pass through
+#
+# pacman refuses to install or remove unless it runs as root, whatever paths it is given, so
+# the non-query operations run under fakeroot: pacman is told it is root, writes the files as
+# you, and the root ownership it then sets is faked for the session, so the files end up yours.
+# The configuration is written to ~/.local/etc/pacman.conf from the real paths each run, since
+# pacman.conf expands no ~ or variables. relocate uses a second one, pacman-alarm.conf beside it,
+# that adds Arch Linux ARM's repositories; the plain one has none, so that -U never pulls a /usr
+# package from them to satisfy a dependency.
+#
+# This database knows only what it installed itself, not the host's packages, so for -U the
+# package's dependencies are checked against the host's database and the satisfied ones are
+# passed as --assume-installed. A dependency the host lacks is still an error, and a dependency
+# on another ~/.local package is resolved against this database as usual.
+#
+# relocate suits a program that needs no file outside its own tree: a binary, its libraries,
+# man pages. It refuses a package with files under /etc or /var, or under the parts of /usr that
+# only work from there (systemd and udev directories, polkit, system D-Bus services), drops the
+# install scriptlet, points absolute symlinks into /usr at ~/.local, and refuses a package whose
+# libraries the host cannot supply, a glibc or Qt newer than the host's among them. What it cannot
+# see is a program that looks for its data under /usr at run time; that one needs a build from
+# pkgbuilds/ instead.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+[[ $# -eq 0 || $1 == -h || $1 == --help ]] && { usage; exit 0; }
+
+die() { echo "pacman-home: $*" >&2; exit 1; }
+say() { printf '%-10s %s\n' "$1" "${2//$HOME/\~}" >&2; }
+
+LOCAL=$HOME/.local
+IN_PKG=${LOCAL#/}/                      # the prefix as a package lists it: home/<user>/.local/
+CONF=$LOCAL/etc/pacman.conf
+ALARM_CONF=$LOCAL/etc/pacman-alarm.conf
+ALARM_MIRROR=${ALARM_MIRROR:-https://fl.us.mirror.archlinuxarm.org}
+CACHE=$LOCAL/var/cache/pacman/pkg
+HOST_PACMAN=/usr/bin/pacman
+PACMAN=$HOST_PACMAN
+
+mkdir -p "$LOCAL/var/lib/pacman" "$CACHE" "$LOCAL/var/log" \
+  "$LOCAL/etc/pacman.d/hooks" "$LOCAL/etc/pacman.d/gnupg"
+
+# RootDir stays /: a prefix build's files carry absolute paths under $HOME. Everything pacman
+# keeps for itself is pointed under ~/.local. HookDir is added to the system hook directory, not
+# substituted for it, but the system hooks trigger on /usr paths that these packages never touch.
+cat > "$CONF" <<CONF
+# Written by steam-frame-utils' pacman-home on each run; edits here are lost.
+[options]
+RootDir  = /
+DBPath   = $LOCAL/var/lib/pacman
+CacheDir = $CACHE
+LogFile  = $LOCAL/var/log/pacman.log
+HookDir  = $LOCAL/etc/pacman.d/hooks
+GPGDir   = $LOCAL/etc/pacman.d/gnupg
+LocalFileSigLevel = Optional
+CONF
+# Arch Linux ARM's keyring isn't in that GPGDir, so its packages are taken on the database's
+# checksum alone, which pacman still verifies.
+cat > "$ALARM_CONF" <<CONF
+# Written by steam-frame-utils' pacman-home on each run; edits here are lost.
+[options]
+Include = $CONF
+Architecture = aarch64
+
+[core]
+SigLevel = Never
+Server = $ALARM_MIRROR/\$arch/\$repo
+
+[extra]
+SigLevel = Never
+Server = $ALARM_MIRROR/\$arch/\$repo
+
+[alarm]
+SigLevel = Never
+Server = $ALARM_MIRROR/\$arch/\$repo
+CONF
+
+# --- check: a package's files outside ~/.local --------------------------------------------------
+
+# outside_prefix PKG -- lists the entries not under ~/.local; true if there are any
+outside_prefix() {
+  bsdtar -tf "$1" | awk -v p="$IN_PKG" '
+    /^\.[A-Z]+$/ { next }                                  # .PKGINFO, .MTREE, .BUILDINFO, .INSTALL
+    index($0, p) == 1 { next }                             # under the prefix
+    index(p, $0) == 1 && substr($0, length($0)) == "/" { next }   # a parent of it: home/, home/<user>/
+    { print; found = 1 }
+    END { exit !found }'
+}
+
+check_cmd() {
+  (( $# )) || die "check needs a package file"
+  local pkg bad=0
+  for pkg in "$@"; do
+    [[ -f $pkg ]] || die "no such file: $pkg"
+    if out=$(outside_prefix "$pkg"); then
+      bad=1
+      printf '%s: files outside %s:\n' "${pkg##*/}" "${LOCAL//$HOME/\~}"
+      head -n 20 <<<"$out" | sed 's/^/  /'
+      [[ $(wc -l <<<"$out") -gt 20 ]] && echo "  ... $(( $(wc -l <<<"$out") - 20 )) more"
+    else
+      printf '%s: all files under %s\n' "${pkg##*/}" "${LOCAL//$HOME/\~}"
+    fi
+  done
+  return $bad
+}
+
+# --- relocate: a stock binary package moved under ~/.local --------------------------------------
+
+# sync_alarm -- Arch Linux ARM's databases, refreshed. No fakeroot inside fakeroot.
+sync_alarm() {
+  local fr=(fakeroot); [[ -n ${FAKEROOTKEY:-} ]] && fr=()
+  say "sync" "Arch Linux ARM's databases from $ALARM_MIRROR"
+  "${fr[@]}" "$PACMAN" --config "$ALARM_CONF" -Sy >/dev/null || die "can't sync the databases"
+}
+
+# fetch NAME -- the package from Arch Linux ARM into the cache; prints its path. Empty, with a
+# note, when the installed version is already that one.
+fetch() {
+  local name=$1 url ver have
+  sync_alarm
+  url=$("$PACMAN" --config "$ALARM_CONF" -Spdd "$name" 2>/dev/null) \
+    || die "no package $name in Arch Linux ARM's core, extra or alarm"
+  ver=$("$PACMAN" --config "$ALARM_CONF" -Spdd --print-format %v "$name")
+  have=$("$PACMAN" --config "$CONF" -Q "$name" 2>/dev/null | awk '{print $2}') || true
+  if [[ -n $have && $have == "$ver" ]]; then
+    say "ok" "$name $ver from Arch Linux ARM is installed"
+    return 0
+  fi
+  say "download" "$url"
+  fakeroot "$PACMAN" --config "$ALARM_CONF" -Swdd --noconfirm "$name" >/dev/null \
+    || die "can't download $name"
+  printf '%s\n' "$CACHE/${url##*/}"
+}
+
+# relocate_pkg FILE [allow] -- the relocated package, written to the cache; prints its path.
+# With allow, libraries the host lacks are a warning rather than a refusal.
+relocate_pkg() {
+  local pkg=$1 allow=${2:-} tmp out top bad link target libdirs
+  [[ -f $pkg ]] || die "no such file: $pkg"
+  tmp=$(mktemp -d)
+  trap 'command rm -rf "$tmp"' RETURN
+  bsdtar -xf "$pkg" -C "$tmp" || die "can't extract $pkg"
+
+  for top in "$tmp"/*; do
+    [[ -e $top ]] || continue
+    [[ ${top##*/} == usr ]] \
+      || die "${pkg##*/} has files under /${top##*/}, which have no place under ~/.local;" \
+        "it needs a build from pkgbuilds/ instead"
+  done
+  [[ -d $tmp/usr ]] || die "${pkg##*/} has no files under /usr"
+  bad=$(cd "$tmp" && ls -d usr/lib/systemd usr/lib/udev usr/lib/sysusers.d usr/lib/tmpfiles.d \
+    usr/lib/modules usr/lib/firmware usr/share/polkit-1 usr/share/dbus-1/system-services \
+    usr/share/dbus-1/system.d usr/lib/security 2>/dev/null || true)
+  [[ -z $bad ]] || die "${pkg##*/} has files that only work from /usr:" $bad
+  if [[ -e $tmp/.INSTALL ]]; then
+    say "drop" "its install scriptlet, which assumes /usr:"
+    sed 's/^/    /' "$tmp/.INSTALL" >&2
+    command rm -f "$tmp/.INSTALL"
+  fi
+
+  mkdir -p "$tmp/${IN_PKG%/*/}"
+  command mv -f "$tmp/usr" "$tmp/${IN_PKG%/}"
+  # Absolute symlinks into /usr would point at the host's files, or at nothing.
+  while IFS= read -r -d '' link; do
+    target=$(readlink "$link")
+    [[ $target == /usr/* || $target == /usr ]] || continue
+    ln -sfn "$LOCAL${target#/usr}" "$link"
+  done < <(find "$tmp/${IN_PKG%/}" -type l -print0)
+  # Libraries the host cannot supply. The package's own library directories count as supplied,
+  # as they will be under ~/.local/lib; what the loader reports on stderr counts too, since that
+  # is where a symbol version the host's library lacks (a newer glibc or Qt) is named.
+  libdirs=$(find "$tmp/${IN_PKG%/}/lib" -type d 2>/dev/null | tr '\n' ':')
+  bad=$(cd "$tmp/${IN_PKG%/}" && find bin lib -type f \( -perm -u+x -o -name '*.so*' \) 2>/dev/null \
+    | while IFS= read -r f; do
+        head -c4 "$f" | grep -q $'\x7fELF' || continue
+        LD_LIBRARY_PATH=$libdirs ldd "$f" 2>&1 | grep -E 'not found' \
+          | sed -E 's/^[^:]*: //; s/ \(required by .*//' | sed "s|^|    $f: |"
+      done | sort -u)
+  if [[ -n $bad ]]; then
+    if [[ -n $allow ]]; then
+      say "warning" "libraries the host lacks; the program may not run:"$'\n'"$bad"
+    else
+      die "${pkg##*/} needs libraries the host lacks (--allow-missing-libs installs anyway):"$'\n'"$bad"
+    fi
+  fi
+
+  sed -i "s|^pkgdesc = .*|& [relocated under $LOCAL by pacman-home]|" "$tmp/.PKGINFO"
+  (cd "$tmp" && LANG=C bsdtar -czf .MTREE --format=mtree \
+    --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' .PKGINFO "${IN_PKG%%/*}")
+  out=$CACHE/$(basename "${pkg%.pkg.tar*}").home.pkg.tar.zst
+  (cd "$tmp" && bsdtar --zstd -cf "$out" .PKGINFO .MTREE "${IN_PKG%%/*}")
+  say "relocate" "${pkg##*/} -> $out"
+  printf '%s\n' "$out"
+}
+
+relocate_cmd() {
+  (( $# )) || die "relocate needs a package name or file"
+  local src=$1 pkg out allow= rest=() arg; shift
+  for arg in "$@"; do
+    [[ $arg == --allow-missing-libs ]] && allow=1 || rest+=("$arg")
+  done
+  if [[ -f $src ]]; then
+    pkg=$src
+  else
+    pkg=$(fetch "$src") || exit 1
+    [[ -n $pkg ]] || exit 0
+  fi
+  out=$(relocate_pkg "$pkg" "$allow") || exit 1
+  exec "$0" -U "$out" "${rest[@]}"
+}
+
+case $1 in
+  check) shift; check_cmd "$@"; exit ;;
+  relocate) shift; relocate_cmd "$@" ;;
+esac
+
+# --- pacman proper ---------------------------------------------------------------------------------
+
+# The operation: the first uppercase letter of the first short-option group, or its long form;
+# it is not always $1.
+op=
+for arg in "$@"; do
+  case $arg in
+    --sync|--upgrade|--remove|--query|--deptest|--database|--files|--version|--help)
+      op=$arg; break ;;
+    --*) ;;
+    -[A-Z]*) op=${arg:0:2}; break ;;
+  esac
+done
+
+# Queries need no privilege; everything else runs under fakeroot.
+run=()
+[[ $op =~ ^(-Q|-T|-V|-F|--query|--deptest|--version|--files)$ ]] || run=(fakeroot)
+
+assume=()
+if [[ $op == -U || $op == --upgrade ]]; then
+  for arg in "$@"; do
+    [[ -f $arg && $arg == *.pkg.tar* ]] || continue
+    if out=$(outside_prefix "$arg"); then
+      die "${arg##*/} has files outside ${LOCAL//$HOME/\~}, which this database never installs" \
+        "(pacman-home check lists them):"$'\n'"$(head -n 10 <<<"$out" | sed 's/^/  /')"
+    fi
+    while IFS= read -r dep; do
+      name=${dep%%[<>=]*}
+      # Satisfied on the host, with the host's version so versioned dependencies are honoured;
+      # a dependency the host satisfies through a provider is passed by name alone.
+      if "$HOST_PACMAN" -T "$dep" >/dev/null 2>&1; then
+        ver=$("$HOST_PACMAN" -Q "$name" 2>/dev/null | awk '{print $2}') || true
+        assume+=(--assume-installed "$name${ver:+=$ver}")
+      fi
+    done < <(bsdtar -xOf "$arg" .PKGINFO | sed -n 's/^depend = //p')
+  done
+fi
+
+exec "${run[@]}" "$PACMAN" --config "$CONF" "${assume[@]}" "$@"

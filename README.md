@@ -16,6 +16,8 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
+| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix; `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
+| `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
 | `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md), and [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found |
 
 ## Setup
@@ -401,3 +403,45 @@ there to ThrillSeeker.
 systemd reads `~/.config/environment.d` at login. `setup.sh` copies the file there; reboot
 afterwards. `env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
 `~/.config/environment.d/90-kwin-software-cursor.conf` and reboot.
+
+## Packages for the host
+
+The Frame's image carries makepkg, gcc, meson, cmake and the headers of its libraries, so a
+package can be built on the host itself, against the exact libraries it will run with, with no
+distrobox and no cross toolchain. `pkgbuilds/` holds PKGBUILDs configured with
+`--prefix=$HOME/.local`, so the result finds its data under `~/.local` instead of the read-only
+`/usr`. The header of each PKGBUILD says what it leaves out and why.
+
+```bash
+cd ~/steam-frame-utils/pkgbuilds/NAME && makepkg -f && pacman-home -U NAME-*.pkg.tar.zst
+```
+
+Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
+fetches Arch's PKGBUILD for NAME, rewrites it for the prefix (the configure, cmake, meson and make
+prefix flags, `/usr` under `$pkgdir`, `aarch64` in `arch`, the rpath and pkg-config path for
+`~/.local/lib`), prints the diff, and says which `makedepends` the host lacks. Review it, then
+`makepkg -f` and `pacman-home -U`. The rewrite is the mechanical part: a build system that
+hardcodes `/usr` shows up afterwards as a file outside `~/.local`, which `pacman-home check PKG`
+lists and `pacman-home -U` refuses, and is fixed in the PKGBUILD by hand.
+
+A program that needs no file outside its own tree, such as waypipe, needn't be built at all.
+`pacman-home relocate NAME` fetches Arch Linux ARM's binary package through pacman's own
+repository machinery, against one mirror (`ALARM_MIRROR` overrides it) with signatures off,
+moves its `/usr` tree under `~/.local`, points its absolute symlinks there, drops its install
+scriptlet, and installs the result; `relocate FILE` does the same to a package you have. It
+refuses a package with files under `/etc` or `/var`, or under the parts of `/usr` that only work
+from there (systemd and udev directories, polkit, system D-Bus services), and one whose libraries
+the host cannot supply, a glibc or Qt newer than the host's included, since the loader names the
+symbol version it lacks; `--allow-missing-libs` installs anyway. What it cannot see is a program that looks for its data under `/usr` at
+run time; that one needs a build.
+
+`bin/pacman-home` is pacman with a configuration written to `~/.local/etc/pacman.conf` that
+keeps the database, cache and log under `~/.local`; `relocate` uses a second one beside it that
+adds Arch Linux ARM's repositories, which the plain one lacks so that `-U` never pulls a `/usr`
+package from them to satisfy a dependency. pacman refuses to install or remove unless it runs as
+root, whatever paths it is given, so `pacman-home` runs those operations under fakeroot, the same
+arrangement makepkg uses to package: pacman is told it is root, writes the files as you, and the
+ownership it sets is faked, so the files are yours. Its database knows only what it installed, so
+a package's dependencies are checked against the host's database and passed as
+`--assume-installed`; a dependency the host lacks is an error. `pacman-home -Q`, `-Ql`, `-Qo` and
+`-R` work as usual within that database.

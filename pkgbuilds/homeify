@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# steam-frame-utils: a stock Arch PKGBUILD rewritten for a ~/.local prefix, into pkgbuilds/NAME/.
+#
+# Usage:  pkgbuilds/homeify NAME          Arch's PKGBUILD for NAME, from gitlab.archlinux.org,
+#                                         with the files it lists alongside (patches, units)
+#         pkgbuilds/homeify NAME FILE     a PKGBUILD you already have
+#
+# The original is kept as PKGBUILD.upstream and the diff printed. The rewrite: the prefix given
+# to configure, cmake, meson (arch-meson too) and make, with sysconfdir and localstatedir under it;
+# the *dir= flags that name /usr; /usr, /etc, /var and /opt under $pkgdir and in backup=; aarch64
+# added to arch;
+# makepkg's debug split and lto turned off; the install scriptlet dropped, since nothing runs it;
+# and PKG_CONFIG_PATH and an rpath for ~/.local/lib exported in build(), so packages built this
+# way find each other. It ends with the makedepends and depends the host lacks.
+#
+# Review the result before building; this is the mechanical part. What a build system hardcodes
+# shows up afterwards as a file outside ~/.local, which `pacman-home check` lists and `pacman-home
+# -U` refuses; fix that in the PKGBUILD by hand. A program that looks under /usr at run time
+# shows up only when it runs. Then:
+#   cd pkgbuilds/NAME && makepkg -f && pacman-home -U NAME-*.pkg.tar.zst
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "homeify: $*" >&2; exit 1; }
+
+[[ $# -ge 1 && $1 != -h && $1 != --help ]] || { usage; exit 0; }
+name=$1 given=${2:-}
+[[ $name =~ ^[a-z0-9@._+-]+$ ]] || die "not a package name: $name"
+here=$(cd "$(dirname "$0")" && pwd)
+dir=$here/$name
+base=https://gitlab.archlinux.org/archlinux/packaging/packages/$name/-/raw/main
+mkdir -p "$dir"
+upstream=$dir/PKGBUILD.upstream
+
+if [[ -n $given ]]; then
+  [[ -f $given ]] || die "no such file: $given"
+  command cp -f "$given" "$upstream"
+else
+  curl -fsSL -o "$upstream" "$base/PKGBUILD" \
+    || die "no PKGBUILD for $name at $base (Arch's packaging repos; the AUR isn't covered)"
+  # Files the PKGBUILD lists without a URL live next to it in the repo.
+  while IFS= read -r src; do
+    [[ $src == *://* || $src == *::* ]] && continue
+    curl -fsSL -o "$dir/$src" "$base/$src" || die "can't fetch $src, listed in source=()"
+  done < <(bash -c 'source "$1" >/dev/null 2>&1; printf "%s\n" "${source[@]}"' _ "$upstream")
+fi
+
+{
+  cat <<HEADER
+# Rewritten for a \$HOME/.local prefix by steam-frame-utils' pkgbuilds/homeify on $(date +%F), from
+#   ${given:-$base/PKGBUILD}
+# The original is PKGBUILD.upstream. Built on the Frame host with makepkg and installed with
+# pacman-home; see README.md#packages-for-the-host.
+
+HEADER
+  sed -E \
+    -e '/^arch=\(/ { /aarch64|any/! s/^arch=\((.*)\)/arch=('"'"'aarch64'"'"' \1)/ }' \
+    -e '0,/^pkg(base|name)=/{/^pkg(base|name)=/ a\
+\
+# homeify: the prefix, and makepkg'"'"'s debug split and lto, which lengthens a build for nothing here.\
+_prefix=$HOME/.local\
+options+=(!debug !lto)
+}' \
+    -e 's/^options=\((.*)\)/options=(\1 !debug !lto)/' \
+    -e 's/^install=/# homeify, dropped (nothing would run it): install=/' \
+    -e '/^backup=\(/ s|(["'"'"'( ])(etc\|usr\|var\|opt)/|\1${_prefix#/}/\2/|g' \
+    -e 's#\barch-meson\b#arch-meson --prefix "$_prefix"#g' \
+    -e 's#(prefix|PREFIX)=/usr([^[:alnum:]_/]|$)#\1="$_prefix"\2#g' \
+    -e 's#--prefix /usr([^[:alnum:]_/]|$)#--prefix "$_prefix"\1#g' \
+    -e 's#(sysconfdir|SYSCONFDIR)[= ]/etc([^[:alnum:]_/]|$)#\1="$_prefix/etc"\2#g' \
+    -e 's#(localstatedir|LOCALSTATEDIR)[= ]/var([^[:alnum:]_/]|$)#\1="$_prefix/var"\2#g' \
+    -e 's#((dir|DIR)=)/usr(/|[^[:alnum:]_]|$)#\1"$_prefix"\3#g' \
+    -e 's#"(\$\{?pkgdir\}?)"/(usr)#"\1$_prefix"#g' \
+    -e 's#"(\$\{?pkgdir\}?)"/(etc|var|opt)\b#"\1$_prefix"/\2#g' \
+    -e 's#(\$\{?pkgdir\}?)/usr#\1$_prefix#g' \
+    -e 's#(\$\{?pkgdir\}?)/(etc|var|opt)\b#\1$_prefix/\2#g' \
+    -e '/^build *\(\) *\{/ a\
+  # homeify: what is already under ~/.local is found at configure time and at run time.\
+  export PKG_CONFIG_PATH="$_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"\
+  export LDFLAGS="${LDFLAGS:-} -Wl,-rpath,$_prefix/lib"' \
+    "$upstream"
+} > "$dir/PKGBUILD"
+bash -n "$dir/PKGBUILD" || die "the rewrite left $dir/PKGBUILD unparsable; see the diff"
+[[ -f $dir/.gitignore ]] || printf '%s\n' '# makepkg working files' src/ pkg/ '*.pkg.tar.*' \
+  '*.tar.*' '*.zip' PKGBUILD.upstream > "$dir/.gitignore"
+
+echo "== $dir/PKGBUILD, against the original:"
+diff -u "$upstream" "$dir/PKGBUILD" | sed -n '3,$p' || true
+
+echo
+echo "== on this host ($(uname -m)):"
+missing=$(bash -c 'source "$1" >/dev/null 2>&1
+  printf "%s\n" "${makedepends[@]}" "${checkdepends[@]}" "${depends[@]}"' _ "$dir/PKGBUILD" \
+  | sed 's/[<>=].*//' | sort -u | while IFS= read -r d; do
+      [[ -n $d ]] && ! pacman -T "$d" >/dev/null 2>&1 && echo "$d"; done || true)
+if [[ -z $missing ]]; then
+  echo "   every makedepends and depends is installed"
+else
+  echo "   not installed, so the build needs them first, from pkgbuilds/ or dropped:"
+  echo "$missing" | sed 's/^/     /'
+fi
+echo "   next: cd ${dir//$HOME/\~} && makepkg -f && pacman-home -U $name-*.pkg.tar.zst"
