@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# steam-frame-utils: the Wi-Fi networks NetworkManager has saved, from Desktop Mode, where the
+# Frame has no Plasma network applet: by default only the ones in range now, strongest first.
+#
+# Usage:  wifi-known [--all]
+#
+# Columns: signal (0-100, blank when out of range), * for the network in use, the SSID, and the
+# connection's name when it differs from the SSID. --all lists every saved network, in range or
+# not. Saved networks are matched by SSID, not by connection name, so a renamed one still shows.
+# Connect with `nmcli connection up NAME`.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "wifi-known: $*" >&2; exit 1; }
+
+all=
+case ${1:-} in
+  '') ;;
+  --all) all=yes ;;
+  -h|--help) usage; exit 0 ;;
+  *) die "unknown argument: $1" ;;
+esac
+command -v nmcli >/dev/null || die "nmcli not found"
+
+# Saved Wi-Fi connections, SSID -> connection name. Single-field queries with escaping off, so
+# an SSID with a colon in it comes through as it is.
+declare -A saved=()
+while IFS= read -r uuid; do
+  ssid=$(nmcli -e no -g 802-11-wireless.ssid connection show "$uuid")
+  if [[ -n $ssid ]]; then saved[$ssid]=$(nmcli -e no -g connection.id connection show "$uuid"); fi
+done < <(nmcli -t -f UUID,TYPE connection show | sed -n 's/:802-11-wireless$//p')
+(( ${#saved[@]} )) || die "no saved Wi-Fi networks"
+
+# What is in range, the strongest sighting per SSID. SSID goes last in the terse output so that
+# only its own colons are escaped ones (\:), undone here along with \\.
+declare -A signal=() inuse=()
+while IFS= read -r line; do
+  in=${line%%:*} line=${line#*:}
+  sig=${line%%:*} ssid=${line#*:}
+  ssid=${ssid//\\:/:} ssid=${ssid//\\\\/\\}
+  [[ -n $ssid && -v saved[$ssid] ]] || continue
+  if (( sig > ${signal[$ssid]:--1} )); then signal[$ssid]=$sig; fi
+  if [[ $in == '*' ]]; then inuse[$ssid]='*'; fi
+done < <(nmcli -t -f IN-USE,SIGNAL,SSID device wifi list)
+
+# A sort key ahead of each line, -1 for out of range, so those come last.
+for ssid in "${!saved[@]}"; do
+  [[ -n $all || -v signal[$ssid] ]] || continue
+  name=${saved[$ssid]}
+  [[ $name == "$ssid" ]] && name= || name="  ($name)"
+  printf '%s\t%3s %s %s%s\n' "${signal[$ssid]:--1}" "${signal[$ssid]:-}" "${inuse[$ssid]:- }" "$ssid" "$name"
+done | sort -t$'\t' -k1,1nr | cut -f2-
