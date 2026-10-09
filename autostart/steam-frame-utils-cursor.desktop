@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=steam-frame-utils cursor size
+Comment=Gives KWin the saved cursor size again; each start it takes gamescope's 256 px until told to reread kcminputrc
+Exec=@SRC@/bin/cursor-size --apply
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true

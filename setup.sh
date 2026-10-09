@@ -7,8 +7,8 @@
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
 # With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
-# that finds bin/podman, the Desktop Mode cursor fix, and, in ~/.bashrc and ~/.zshrc, this
-# checkout's bin/ on PATH and the Frametop desktop terminal fix.
+# that finds bin/podman, the Desktop Mode cursor fix, the desktops' cursor size, and, in ~/.bashrc
+# and ~/.zshrc, this checkout's bin/ on PATH and the Frametop desktop terminal fix.
 #
 # --check           report what would change, and change nothing
 # --yes             answer yes: create the arch box, and replace an installed emacs or waypipe
@@ -115,6 +115,7 @@ done
 
 changed=0
 reboot_needed=0
+desktop_restart=0
 
 say()  { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
 act()  { changed=1; if (( check )); then say "would $2" "$1"; else say "$2" "$1"; fi; }
@@ -386,6 +387,23 @@ done
 
 conf=90-kwin-software-cursor.conf
 copy_file "$SRC/environment.d/$conf" "$HOME/.config/environment.d/$conf" 0644 && reboot_needed=1
+
+# Its size: an autostart entry runs bin/cursor-size --apply in each desktop, the stock one from
+# ~/.config/autostart and Frametop's from its own config dir, once Frametop has made that. The
+# Exec path is this checkout's, so the entry is rendered first; the rc files' $HOME form won't do
+# in a .desktop file. Not plasma-workspace/env: on the Frame that mechanism is dead, see the
+# README.
+entry=steam-frame-utils-cursor.desktop
+content=$(mktemp)
+sed "s|@SRC@|$SRC|g" "$SRC/autostart/$entry" > "$content"
+for dir in "$HOME/.config" "$HOME/.config/frametop"; do
+  if [[ $dir == */frametop && ! -d $dir ]]; then
+    say "skip" "$dir/autostart/$entry: no Frametop; re-run after installing it"
+    continue
+  fi
+  copy_file "$content" "$dir/autostart/$entry" 0644 && desktop_restart=1
+done
+command rm -f "$content"
 
 # --- Nerd Fonts: --nerd-fonts ------------------------------------------------------------------
 # Only whether each font is there at all; updating needs the network, so it is left to
@@ -840,5 +858,6 @@ elif (( check )); then
   echo "run without --check to apply"
 else
   (( reboot_needed )) && echo "reboot for the environment.d change to reach Desktop Mode"
+  (( desktop_restart )) && echo "the cursor size autostart entry runs at a desktop's next start"
   echo "open a new shell for the shell init changes"
 fi

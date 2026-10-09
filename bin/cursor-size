@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# steam-frame-utils: show or set the mouse cursor's size in a Plasma desktop on the Frame,
+# Frametop's or SteamOS's stock Desktop, and apply it to the running desktop at once.
+#
+# Usage:  cursor-size [SIZE] [--theme NAME] [--desktop frametop|stock]
+#         cursor-size --apply [--desktop frametop|stock]
+#
+# With no SIZE it prints the desktop's size and theme. SIZE is in pixels, 24 by default in
+# Plasma; gamescope's own cursor is 256. --theme also sets the theme (breeze_cursors,
+# Breeze_Light, Adwaita, steam, ...). --apply sets nothing: it gives KWin the saved setting again,
+# for the autostart entry setup.sh installs, since at each start KWin takes gamescope's
+# XCURSOR_SIZE=256 and XCURSOR_THEME=steam over kcminputrc until told to reread it.
+#
+# Run from a terminal inside a desktop, it changes that one. Elsewhere (SSH, Game Mode) it changes
+# the desktop that runs, Frametop's first, or with --desktop the one named; with neither running
+# it saves the setting for both. The setting goes in the desktop's kcminputrc, where System
+# Settings keeps it too. KWin redraws its cursor at once; an app that draws its own (X11 apps, some
+# older toolkits) keeps the size the desktop started with.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "cursor-size: $*" >&2; exit 1; }
+
+size= theme= desktop= apply=
+while (( $# )); do
+  case $1 in
+    --apply) apply=1 ;;
+    --theme) [[ $# -ge 2 ]] || die "--theme needs a name"; theme=$2; shift ;;
+    --theme=*) theme=${1#*=} ;;
+    --desktop) [[ $# -ge 2 ]] || die "--desktop needs frametop or stock"; desktop=$2; shift ;;
+    --desktop=*) desktop=${1#*=} ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "unknown argument: $1" ;;
+    *) [[ -z $size ]] || die "one SIZE only"; size=$1 ;;
+  esac
+  shift
+done
+case $desktop in ''|frametop|stock) ;; *) die "--desktop is frametop or stock, not $desktop" ;; esac
+[[ -z $apply || ( -z $size && -z $theme ) ]] || die "--apply takes no SIZE or --theme"
+if [[ -n $size ]]; then
+  [[ $size =~ ^[0-9]+$ ]] && (( size >= 8 && size <= 512 )) || die "SIZE is a number of pixels, 8 to 512"
+fi
+if [[ -n $theme ]]; then
+  found=
+  for d in "${XDG_DATA_HOME:-$HOME/.local/share}/icons" "$HOME/.icons" /usr/share/icons; do
+    [[ -d $d/$theme/cursors ]] && found=1
+  done
+  [[ -n $found ]] || die "no cursor theme $theme in ~/.local/share/icons, ~/.icons or /usr/share/icons"
+fi
+command -v kwriteconfig6 >/dev/null || die "kwriteconfig6 not found"
+
+run=/run/user/$(id -u)
+declare -A config=([frametop]=$HOME/.config/frametop [stock]=$HOME/.config)
+declare -A runtime=([frametop]=$run/frametop [stock]=$run/nested_plasma)
+
+# here: the desktop this terminal is in, if any, by its XDG_RUNTIME_DIR
+here=
+if [[ ${KDE_FULL_SESSION:-} == true ]]; then
+  for d in frametop stock; do [[ ${XDG_RUNTIME_DIR:-} == "${runtime[$d]}" ]] && here=$d; done
+fi
+
+# bus_of DESKTOP -- the session bus address of its plasmashell, if it runs
+bus_of() {
+  local pid env
+  for pid in $(pgrep -u "$(id -u)" -x plasmashell); do
+    env=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null) || continue
+    grep -qxF "XDG_RUNTIME_DIR=${runtime[$1]}" <<<"$env" || continue
+    sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' <<<"$env"
+    return
+  done
+}
+
+if [[ -n $desktop ]]; then targets=("$desktop")
+elif [[ -n $here ]]; then targets=("$here")
+elif [[ -n $(bus_of frametop) ]]; then targets=(frametop)
+elif [[ -n $(bus_of stock) ]]; then targets=(stock)
+else targets=(frametop stock)
+fi
+
+read_key() { XDG_CONFIG_HOME=${config[$1]} kreadconfig6 --file kcminputrc --group Mouse --key "$2"; }
+write_key() { XDG_CONFIG_HOME=${config[$1]} kwriteconfig6 --file kcminputrc --group Mouse --key "$2" "$3"; }
+show() {
+  local s t
+  s=$(read_key "$1" cursorSize) t=$(read_key "$1" cursorTheme)
+  printf '%-9s %s px, %s\n' "$1" "${s:-24}" "${t:-breeze_cursors}"
+}
+
+for d in "${targets[@]}"; do
+  if [[ -z $size && -z $theme && -z $apply ]]; then show "$d"; continue; fi
+  [[ $d == stock || -d ${config[$d]} ]] || die "${config[$d]} is missing: is Frametop installed?"
+  [[ -z $size ]] || write_key "$d" cursorSize "$size"
+  [[ -z $theme ]] || write_key "$d" cursorTheme "$theme"
+  # KWin reloads [Mouse] from kcminputrc on KGlobalSettings' CursorChanged (5), as System
+  # Settings sends it.
+  if [[ $d == "$here" ]]; then bus=${DBUS_SESSION_BUS_ADDRESS:-}; else bus=$(bus_of "$d"); fi
+  if [[ -n $bus ]]; then
+    DBUS_SESSION_BUS_ADDRESS=$bus dbus-send --session --type=signal /KGlobalSettings \
+      org.kde.KGlobalSettings.notifyChange int32:5 int32:0
+    note="applied"
+  elif [[ -n $apply ]]; then
+    note="not running; nothing to apply to"
+  else
+    note="saved; it applies when that desktop starts"
+  fi
+  printf '%s: %s\n' "$(show "$d")" "$note"
+done

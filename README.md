@@ -14,6 +14,8 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, mise, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
+| `bin/cursor-size [SIZE] [--theme NAME] [--desktop frametop\|stock]` | shows or sets the mouse cursor's size in Desktop Mode or the Frametop desktop, and applies it to the running desktop (see [Cursor size](#cursor-size)) |
+| `autostart/` | runs `cursor-size --apply` as each desktop starts, so the size set survives a restart (same section) |
 | `bin/wifi-known [--all]` | the Wi-Fi networks NetworkManager has saved that are in range, strongest first; Desktop Mode has no Plasma network applet, so this and `nmtui` stand in for it |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
@@ -45,6 +47,7 @@ With no options:
 | `bin/` | goes on `PATH` from this checkout, through `shell-init/bin.sh` (see [Shell init](#shell-init)), so a `git pull` updates its scripts. A copy in `~/.local/bin` from an earlier version would come first, so it is backed up to `<file>.bak-<timestamp>` |
 | `shell-init/frametop.sh` | sourced from the block at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
 | `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
+| `autostart/` | copies to `~/.config/autostart/`, and to `~/.config/frametop/autostart/` once Frametop is installed, with this checkout's path in `Exec`; each desktop picks it up at its next start |
 
 Options add the rest, and each one also fixes only what's missing:
 
@@ -487,6 +490,41 @@ there to ThrillSeeker.
 systemd reads `~/.config/environment.d` at login. `setup.sh` copies the file there; reboot
 afterwards. `env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
 `~/.config/environment.d/90-kwin-software-cursor.conf` and reboot.
+
+### Cursor size
+
+Both desktops start inside Game Mode's gamescope, and inherit its `XCURSOR_SIZE=256` and
+`XCURSOR_THEME=steam` (gamescope exports them, and `/usr/lib/steamos/gamescope-onready` imports
+them into the systemd user environment). KWin takes those two over the size and theme Plasma keeps
+in `kcminputrc` (`[Mouse] cursorSize` and `cursorTheme`, 24 and `breeze_cursors` by default), so
+the cursor comes up huge and System Settings' choice is lost at the next start.
+
+`cursor-size` sets it for the running desktop:
+
+```bash
+cursor-size 32
+```
+
+It writes `kcminputrc` and tells KWin to reload it, the way System Settings' Cursors page does, so
+the cursor changes at once. With no size it prints the current one; `--theme NAME` sets the theme
+as well. From a terminal inside a desktop it changes that desktop. From SSH or Game Mode it changes
+the one that runs (Frametop's first), or the one `--desktop frametop|stock` names; with neither
+running it saves the setting for both. Apps that draw their own cursor, X11 ones and some older
+toolkits, size it from the `XCURSOR_SIZE` the desktop started with.
+
+At each start KWin takes gamescope's variables again, so `setup.sh` installs
+`autostart/steam-frame-utils-cursor.desktop` in each desktop's autostart dir; it runs
+`cursor-size --apply`, which gives KWin the saved setting without changing it. The cursor is 256 px
+for the second or two until Plasma reaches autostart.
+
+The obvious place, a script in `plasma-workspace/env/` exporting the variables before KWin starts,
+doesn't work on the Frame, and that's worth knowing for anything else one might put there. Plasma
+sources every env script, the system ones in `/etc/xdg` first, in one shell that then prints the
+environment back. SteamOS's `/etc/xdg/plasma-workspace/env/set-return-icon.sh` does `set -eu` and
+reads `/sys/class/dmi/id/board_name`, a DMI node the arm64 Frame doesn't have, so the shell dies
+there and startplasma gets nothing back: no env script takes effect, SteamOS's own language and
+ibus ones included. The systemd user environment is no way in either: the desktops run on a
+private D-Bus (`dbus-run-session`), where startplasma's import of it fails.
 
 ## Packages for the host
 
