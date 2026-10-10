@@ -17,6 +17,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/cursor-size [SIZE] [--theme NAME] [--desktop frametop\|stock]` | shows or sets the mouse cursor's size in Desktop Mode or the Frametop desktop, and applies it to the running desktop (see [Cursor size](#cursor-size)) |
 | `autostart/` | runs `cursor-size --apply` as each desktop starts, so the size set survives a restart (same section) |
 | `bin/wifi-known [--all]` | the Wi-Fi networks NetworkManager has saved that are in range, strongest first; Desktop Mode has no Plasma network applet, so this and `nmtui` stand in for it |
+| `bin/vr-controllers [off [left\|right]]` | lists the VR controllers SteamVR knows, with battery, or turns them off from a shell as the dashboard's power menu does; this goes through a private SteamVR interface, so the script says how its slot was found and refuses if SteamVR renames the interface |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 | `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |

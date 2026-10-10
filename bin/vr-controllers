@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# steam-frame-utils: the Frame's VR controllers from a shell: list them, or turn them off as the
+# SteamVR dashboard's power menu does, without putting the headset on.
+#
+# Usage:  vr-controllers
+#         vr-controllers off [left|right]
+#
+# With no argument it lists SteamVR's controllers: hand, model, serial, whether each is on, and its
+# battery. `off` turns off every controller that is on, or only the hand named; a button turns it
+# back on. The headset is never touched. SteamVR has to be running, as it is in Game Mode. It runs
+# on the Frame itself, so from a PC use it over ssh.
+#
+# SteamVR has no public call for this. The dashboard's "Turn off controller" goes through the
+# private IVRControlPanel_006 interface, whose PowerOffTrackedDevice is the 13th method (slot 12).
+# That layout is read off the Android build SteamVR ships beside the Linux one, which keeps its
+# symbols: CHmdSystemLatest's vtable in /opt/steamvr/bin/androidarm64/vrclient.so. A SteamVR update
+# that renames the interface makes this tool refuse rather than call the wrong slot.
+
+import ctypes as C
+import json
+import os
+import sys
+import time
+
+NAME = "vr-controllers"
+POWER_OFF_SLOT = 12            # IVRControlPanel_006::PowerOffTrackedDevice(uint32_t)
+
+MAX_DEVICES = 64               # k_unMaxTrackedDeviceCount
+CLASS_CONTROLLER = 2           # ETrackedDeviceClass
+ROLES = {1: "left", 2: "right"}    # ETrackedControllerRole: LeftHand, RightHand
+PROP_MODEL = 1001              # Prop_ModelNumber_String
+PROP_SERIAL = 1002             # Prop_SerialNumber_String
+PROP_CHARGING = 1011           # Prop_DeviceIsCharging_Bool
+PROP_BATTERY = 1012            # Prop_DeviceBatteryPercentage_Float
+PROP_HAS_BATTERY = 1026        # Prop_DeviceProvidesBatteryStatus_Bool
+APP_BACKGROUND = 3             # VRApplication_Background: fails unless SteamVR already runs
+ERR_NO_SERVER = 121            # VRInitError_Init_NoServerForBackgroundApp
+
+
+def die(msg):
+    print(f"{NAME}: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def usage():
+    with open(__file__) as f:
+        lines = f.read().splitlines()[1:]
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        print(line[2:] if line.startswith("# ") else line[1:])
+
+
+def runtime_dir():
+    # Where SteamVR runs from, as `steamvr path` would say; vrpathreg keeps it here.
+    path = os.path.expanduser("~/.config/openvr/openvrpaths.vrpath")
+    try:
+        with open(path) as f:
+            return json.load(f)["runtime"][0]
+    except (OSError, KeyError, IndexError, ValueError):
+        return "/opt/steamvr"
+
+
+class OpenVR:
+    def __init__(self):
+        lib = os.path.join(runtime_dir(), "bin/linuxarm64/libopenvr_api.so")
+        try:
+            self.api = api = C.CDLL(lib)
+        except OSError:
+            die(f"{lib} not found: is SteamVR installed?")
+        api.VR_InitInternal2.restype = C.c_void_p
+        api.VR_InitInternal2.argtypes = [C.POINTER(C.c_int), C.c_int, C.c_char_p]
+        api.VR_GetGenericInterface.restype = C.c_void_p
+        api.VR_GetGenericInterface.argtypes = [C.c_char_p, C.POINTER(C.c_int)]
+        api.VR_IsInterfaceVersionValid.restype = C.c_bool
+        api.VR_IsInterfaceVersionValid.argtypes = [C.c_char_p]
+        api.VR_GetVRInitErrorAsEnglishDescription.restype = C.c_char_p
+        api.VR_GetVRInitErrorAsEnglishDescription.argtypes = [C.c_int]
+
+        err = C.c_int(0)
+        api.VR_InitInternal2(C.byref(err), APP_BACKGROUND, b"")
+        if err.value == ERR_NO_SERVER:
+            die("SteamVR isn't running")
+        if err.value:
+            die(f"SteamVR refused: {api.VR_GetVRInitErrorAsEnglishDescription(err.value).decode()}")
+
+        # IVRSystem through its C function table, in openvr_capi.h's order.
+        for version in (b"IVRSystem_026", b"IVRControlPanel_006"):
+            if not api.VR_IsInterfaceVersionValid(version):
+                die(f"this SteamVR has no {version.decode()}; the tool needs updating for it")
+        table = api.VR_GetGenericInterface(b"FnTable:IVRSystem_026", C.byref(err))
+        if err.value or not table:
+            die("SteamVR gave no IVRSystem")
+        fns = C.cast(table, C.POINTER(C.c_void_p * 64)).contents
+        def fn(slot, restype, *argtypes):
+            return C.CFUNCTYPE(restype, *argtypes)(fns[slot])
+        self.role = fn(19, C.c_int, C.c_uint32)
+        self.device_class = fn(20, C.c_int, C.c_uint32)
+        self.connected = fn(21, C.c_bool, C.c_uint32)
+        self._bool = fn(22, C.c_bool, C.c_uint32, C.c_int, C.POINTER(C.c_int))
+        self._float = fn(23, C.c_float, C.c_uint32, C.c_int, C.POINTER(C.c_int))
+        self._string = fn(28, C.c_uint32, C.c_uint32, C.c_int, C.c_char_p, C.c_uint32,
+                          C.POINTER(C.c_int))
+
+        # IVRControlPanel is a C++ interface: a pointer to an object whose first word is its vtable.
+        panel = api.VR_GetGenericInterface(b"IVRControlPanel_006", C.byref(err))
+        if err.value or not panel:
+            die("SteamVR gave no IVRControlPanel")
+        vtable = C.cast(C.c_void_p(panel), C.POINTER(C.POINTER(C.c_void_p * 32))).contents.contents
+        self._panel = panel
+        self._power_off = C.CFUNCTYPE(None, C.c_void_p, C.c_uint32)(vtable[POWER_OFF_SLOT])
+
+    def close(self):
+        self.api.VR_ShutdownInternal()
+
+    def string(self, index, prop):
+        buf = C.create_string_buffer(256)
+        err = C.c_int(0)
+        self._string(index, prop, buf, len(buf), C.byref(err))
+        return "" if err.value else buf.value.decode(errors="replace")
+
+    def boolean(self, index, prop):
+        err = C.c_int(0)
+        value = self._bool(index, prop, C.byref(err))
+        return None if err.value else value
+
+    def battery(self, index):
+        err = C.c_int(0)
+        value = self._float(index, PROP_BATTERY, C.byref(err))
+        return None if err.value else value
+
+    def power_off(self, index):
+        self._power_off(self._panel, index)
+
+    def controllers(self):
+        return [i for i in range(MAX_DEVICES) if self.device_class(i) == CLASS_CONTROLLER]
+
+
+def describe(vr, index):
+    model = vr.string(index, PROP_MODEL) or "?"
+    serial = vr.string(index, PROP_SERIAL) or "?"
+    # SteamVR forgets a controller's hand the moment it is off; the Frame's controllers carry it
+    # in the model name (Roy_Left, Roy_Right).
+    hand = ROLES.get(vr.role(index))
+    if hand is None:
+        hand = next((h for h in ROLES.values() if model.lower().endswith("_" + h)), "-")
+    return hand, model, serial
+
+
+def list_controllers(vr):
+    found = vr.controllers()
+    if not found:
+        print("no controllers known to SteamVR")
+        return
+    for i in found:
+        hand, model, serial = describe(vr, i)
+        if vr.connected(i):
+            state = "on"
+            if vr.boolean(i, PROP_HAS_BATTERY) and (level := vr.battery(i)) is not None:
+                state += f", battery {round(level * 100)}%"
+                if vr.boolean(i, PROP_CHARGING):
+                    state += " charging"
+        else:
+            state = "off"
+        print(f"{hand:<6} {model:<12} {serial:<14} {state}")
+
+
+def turn_off(vr, hand):
+    targets = [i for i in vr.controllers()
+               if vr.connected(i) and (hand is None or ROLES.get(vr.role(i)) == hand)]
+    if not targets:
+        if hand:
+            die(f"the {hand} controller isn't on")
+        print("no controller is on")
+        return
+    names = {i: describe(vr, i) for i in targets}
+    for i in targets:
+        vr.power_off(i)
+    failed = False
+    for i in targets:
+        deadline = time.monotonic() + 3
+        while vr.connected(i) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        hand, model, serial = names[i]
+        if vr.connected(i):
+            print(f"{hand} {model} {serial}: still on")
+            failed = True
+        else:
+            print(f"{hand} {model} {serial}: off")
+    if failed:
+        sys.exit(1)
+
+
+def main(argv):
+    if os.environ.get("CONTAINER_ID") or os.path.exists("/run/.containerenv"):
+        os.execvp("distrobox-host-exec", ["distrobox-host-exec", os.path.abspath(__file__), *argv])
+    hand = None
+    if argv in ([], ["list"]):
+        action = "list"
+    elif argv in (["-h"], ["--help"]):
+        usage()
+        return
+    elif argv[0] == "off" and len(argv) <= 2:
+        action = "off"
+        if len(argv) == 2:
+            hand = argv[1]
+            if hand not in ROLES.values():
+                die(f"off takes left or right, not {hand}")
+    else:
+        die(f"unknown argument: {' '.join(argv)}")
+
+    vr = OpenVR()
+    try:
+        if action == "list":
+            list_controllers(vr)
+        else:
+            turn_off(vr, hand)
+    finally:
+        vr.close()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
