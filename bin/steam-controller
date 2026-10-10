@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+# steam-frame-utils: the Steam Controllers paired to the Frame over Bluetooth: list the ones that
+# are on, or turn them off from a shell, as holding the Steam button does.
+#
+# Usage:  steam-controller
+#         steam-controller off [NAME]
+#
+# With no argument it lists each Steam Controller that is on, with its battery when BlueZ reports
+# it. `off` turns them all off, or only the one whose name (as listed, or any part of it) is NAME.
+# A press of the Steam button turns one back on. This is Valve's own HID command, 0x9f "off!",
+# the one Steam itself sends; the kernel's hid-steam driver doesn't take this controller (28de:1303)
+# yet, so it is sent straight to the hidraw node, which SteamOS lets the user write.
+#
+# Checked on the Steam Controller over Bluetooth; a wired one, or the old one through its dongle,
+# takes the same command on feature report 0 and is tried that way, untested.
+
+import fcntl
+import glob
+import os
+import subprocess
+import sys
+import time
+
+NAME = "steam-controller"
+VALVE = 0x28DE
+BUS_USB, BUS_BLUETOOTH = 0x03, 0x05
+TURN_OFF = bytes([0x9F, 0x04]) + b"off!"      # ID_TURN_OFF_CONTROLLER, length, magic
+REPORT_SIZE = 64                               # one feature report, ID byte included
+
+
+def die(msg):
+    print(f"{NAME}: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def usage():
+    with open(__file__) as f:
+        lines = f.read().splitlines()[1:]
+    for line in lines:
+        if not line.startswith("#"):
+            break
+        print(line[2:] if line.startswith("# ") else line[1:])
+
+
+def hidiocsfeature(size):
+    # _IOC(_IOC_READ | _IOC_WRITE, 'H', 0x06, size), as linux/hidraw.h has it
+    return (3 << 30) | (size << 16) | (ord("H") << 8) | 0x06
+
+
+def controllers():
+    found = []
+    for uevent in sorted(glob.glob("/sys/class/hidraw/hidraw*/device/uevent")):
+        with open(uevent) as f:
+            fields = dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
+        bus, vendor, _ = (int(x, 16) for x in fields.get("HID_ID", "0:0:0").split(":"))
+        if vendor != VALVE:
+            continue
+        found.append({
+            "dev": "/dev/" + uevent.split("/")[4],
+            "name": fields.get("HID_NAME", "?"),
+            "bus": bus,
+            "address": fields.get("HID_UNIQ", ""),     # the Bluetooth address, for BlueZ
+        })
+    return found
+
+
+def battery(ctrl):
+    if ctrl["bus"] != BUS_BLUETOOTH or not ctrl["address"]:
+        return ""
+    try:
+        info = subprocess.run(["bluetoothctl", "info", ctrl["address"]],
+                              capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    for line in info.splitlines():
+        if line.strip().startswith("Battery Percentage:"):
+            return "battery " + line.rsplit("(", 1)[-1].rstrip(")") + "%"
+    return ""
+
+
+def turn_off(ctrl):
+    # Over Bluetooth the controller's vendor commands go on feature report 1; over USB on
+    # report 0, as hid-steam sends them.
+    report_id = 1 if ctrl["bus"] == BUS_BLUETOOTH else 0
+    buf = bytes([report_id]) + TURN_OFF
+    buf += bytes(REPORT_SIZE - len(buf))
+    try:
+        fd = os.open(ctrl["dev"], os.O_RDWR)
+    except PermissionError:
+        die(f"{ctrl['dev']} isn't writable; is this the Frame's own user?")
+    except OSError as e:
+        die(f"{ctrl['dev']}: {e.strerror}")
+    try:
+        fcntl.ioctl(fd, hidiocsfeature(len(buf)), buf)
+    except OSError as e:
+        die(f"{ctrl['name']}: sending the command failed: {e.strerror}")
+    finally:
+        os.close(fd)
+    deadline = time.monotonic() + 3
+    while os.path.exists(ctrl["dev"]) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return not os.path.exists(ctrl["dev"])
+
+
+def main(argv):
+    if os.environ.get("CONTAINER_ID") or os.path.exists("/run/.containerenv"):
+        os.execvp("distrobox-host-exec", ["distrobox-host-exec", os.path.abspath(__file__), *argv])
+    if argv in (["-h"], ["--help"]):
+        usage()
+        return
+    if argv and (argv[0] != "off" or len(argv) > 2):
+        die(f"unknown argument: {' '.join(argv)}")
+
+    found = controllers()
+    if not argv:
+        if not found:
+            print("no Steam Controller is on")
+            return
+        for c in found:
+            link = "bluetooth" if c["bus"] == BUS_BLUETOOTH else "usb"
+            print(f"{c['name']:<32} {link:<10} {battery(c)}".rstrip())
+        return
+
+    if len(argv) == 2:
+        found = [c for c in found if argv[1].lower() in c["name"].lower()]
+        if not found:
+            die(f"no Steam Controller named {argv[1]} is on")
+    elif not found:
+        print("no Steam Controller is on")
+        return
+    failed = False
+    for c in found:
+        if turn_off(c):
+            print(f"{c['name']}: off")
+        else:
+            print(f"{c['name']}: still on")
+            failed = True
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
