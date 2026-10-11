@@ -1,0 +1,83 @@
+# Builds KRdp's server flatpak (apps/krdp) natively on GitHub's arm64 runner, with the same
+# install-krdp.sh the Frame runs, so nobody needs the Frame or qemu to make the bundle.
+# A push that touches the manifest keeps the bundle as a workflow artifact; a krdp-* tag also
+# uploads it to that tag's release, created as a draft if there isn't one, to publish by hand.
+# Each bundle gets a signed build attestation, so a download can be traced to this workflow and
+# commit: gh attestation verify io.github.curiousjtuber.Krdp.flatpak --repo curiousjtuber/steam-frame-utils
+name: krdp flatpak
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, main]
+    paths:
+      - apps/krdp/**
+      - apps/install-krdp.sh
+      - .github/workflows/krdp-flatpak.yml
+    tags: ['krdp-*']
+
+concurrency:
+  group: krdp-flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write     # the release upload on a tag
+  id-token: write     # the attestation's Sigstore signing certificate
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install flatpak
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q flatpak dbus
+          # Ubuntu 24.04 confines unprivileged user namespaces, which bwrap needs for the builder
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+            d=/run/user/$(id -u)
+            sudo install -d -o "$USER" -m 700 "$d"
+            echo "XDG_RUNTIME_DIR=$d" >> "$GITHUB_ENV"
+          fi
+
+      # The flatpak'd builder installs dependencies through the host's flatpak over the session
+      # bus, which a runner doesn't have, so the flatpak steps each get one.
+      - name: Build and bundle
+        run: |
+          mkdir -p dist
+          dbus-run-session -- apps/install-krdp.sh --bundle "$PWD/dist/io.github.curiousjtuber.Krdp.flatpak"
+          (cd dist && sha256sum io.github.curiousjtuber.Krdp.flatpak > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Check krdpserver's libraries resolve
+        run: |
+          dbus-run-session -- flatpak run --command=sh io.github.curiousjtuber.Krdp -c \
+            'ldd /app/bin/krdpserver; ! ldd /app/bin/krdpserver | grep -q "not found"'
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/io.github.curiousjtuber.Krdp.flatpak
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: krdp-flatpak-aarch64
+          path: dist/
+          if-no-files-found: error
+
+      - name: Upload to the tag's release
+        if: startsWith(github.ref, 'refs/tags/krdp-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "KRdp server flatpak (aarch64), $GITHUB_REF_NAME" \
+              --notes "Built by the krdp flatpak workflow from apps/krdp at this tag."
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            dist/io.github.curiousjtuber.Krdp.flatpak dist/SHA256SUMS

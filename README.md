@@ -314,7 +314,9 @@ re-run updates. The header comment of each has the details and the uninstall ste
   rebuild only what changed. KWin lets the sandboxed server capture through the app's desktop
   file, so neither desktop needs KWin's permission checks turned off. Nothing starts it by
   itself. `--bundle` also writes the build as one `.flatpak` file, which another aarch64 device
-  installs with `flatpak --user install FILE` and no build; the releases page has one.
+  installs with `flatpak --user install FILE` and no build. GitHub builds the same bundle on an
+  arm64 runner (`.github/workflows/krdp-flatpak.yml`) when the manifest changes, and attaches it
+  to the release when a `krdp-*` tag is pushed.
 - **`bin/krdpd start [--desktop frametop|stock|DIR] [--port N] [--user NAME] [--address ADDR]`**,
   `stop`, `status`, `log`, `password [NEW | --generate]` runs that server by hand. It serves
   Frametop's desktop when that runs (the stock Desktop only with `--force`: on SteamOS 0.4.5 its
