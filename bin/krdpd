@@ -6,7 +6,7 @@
 # https://github.com/curiousjtuber/steam-frame-utils#apps
 #
 # Usage:  krdpd start [--desktop frametop|stock|DIR] [--port N] [--user NAME] [--address ADDR]
-#         krdpd stop | status | log [LINES]
+#         krdpd stop | status [--keys] | log [LINES]
 #         krdpd password [NEW | --generate]
 #
 # --desktop  which desktop to serve: frametop (Frametop's, runtime dir /run/user/UID/frametop),
@@ -23,6 +23,8 @@
 # --address  default 0.0.0.0, every address: the Frame's firewall already lets the LAN at every
 #            port above 1024, and RDP brings its own TLS and login (NLA). Give the tailnet
 #            address to keep it off the LAN.
+#
+# status --keys prints key=value lines, for bin/krdpd-gui.
 #
 # Clients accept the Frame's self-signed certificate once (made here, in ~/.config/krdpd).
 # KWin allows the capture through the flatpak's desktop file (see the manifest), so neither
@@ -80,10 +82,14 @@ ensure_creds() {
   fi
 }
 
-addresses() {  # "host.local:PORT  LAN:PORT  tailnet-name:PORT"
-  local port=$1 lan tail
-  lan=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
-  tail=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+lan_ip() { ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p'; }
+tailnet_ip() { ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1; }
+
+addresses() {  # "host.local:PORT  LAN:PORT  TAILNET:PORT (tailnet)", or ADDR:PORT for one address
+  local port=$1 address=${2:-0.0.0.0} lan tail
+  case $address in 0.0.0.0|::) ;; *) echo "$address:$port"; return ;; esac
+  lan=$(lan_ip)
+  tail=$(tailnet_ip)
   printf '%s.local:%s' "$(hostname)" "$port"
   [ -n "$lan" ] && printf '  %s:%s' "$lan" "$port"
   [ -n "$tail" ] && printf '  %s:%s (tailnet)' "$tail" "$port"
@@ -126,9 +132,9 @@ start() {
   if ! ss -ltn 2>/dev/null | grep -q ":$port "; then
     echo "krdpd: didn't come up; the log says:" >&2; tail -5 "$log" >&2; exit 1
   fi
-  printf 'desktop=%s\nport=%s\nuser=%s\n' "$dir" "$port" "$user" > "$info"
+  printf 'desktop=%s\nport=%s\nuser=%s\naddress=%s\n' "$dir" "$port" "$user" "$address" > "$info"
   echo "serving $(basename "$dir" | sed 's/nested_plasma/the stock desktop/; s/^frametop$/Frametop/') over RDP"
-  echo "connect to: $(addresses "$port")   user $user   password: krdpd password"
+  echo "connect to: $(addresses "$port" "$address")   user $user   password: krdpd password"
 }
 
 stop() {
@@ -140,13 +146,32 @@ stop() {
 }
 
 status() {
+  [ "${1:-}" = --keys ] && { keys; return; }
   installed && echo "installed: $APP" || echo "not installed: run ~/steam-frame-utils/apps/install-krdp.sh"
   local p; p=$(instance_pid)
   if [ -z "$p" ]; then echo "not running"; return 0; fi
-  local port dir user
+  local port dir user address
   port=$(sed -n 's/^port=//p' "$info" 2>/dev/null); dir=$(sed -n 's/^desktop=//p' "$info" 2>/dev/null); user=$(sed -n 's/^user=//p' "$info" 2>/dev/null)
+  address=$(sed -n 's/^address=//p' "$info" 2>/dev/null)
   echo "running (pid $p), port ${port:-?}, serving ${dir:-?}"
-  echo "connect to: $(addresses "${port:-3391}")   user ${user:-?}"
+  echo "connect to: $(addresses "${port:-3391}" "$address")   user ${user:-?}"
+}
+
+keys() {  # yes/no flags, what start served (while running), and what start can choose from
+  local p; p=$(instance_pid)
+  yn() { "$@" && echo yes || echo no; }
+  echo "installed=$(yn installed)"
+  echo "running=$(yn [ -n "$p" ])"
+  if [ -n "$p" ]; then
+    echo "pid=$p"
+    sed -n '/^\(desktop\|port\|user\|address\)=/p' "$info" 2>/dev/null || true
+  fi
+  echo "hostname=$(hostname)"
+  echo "lan_ip=$(lan_ip)"
+  echo "tailnet_ip=$(tailnet_ip)"
+  echo "frametop=$(yn [ -S "$run/frametop/wayland-0" ])"
+  echo "stock=$(yn [ -S "$run/nested_plasma/wayland-0" ])"
+  echo "password=$(yn [ -s "$conf/password" ])"
 }
 
 password() {
@@ -162,7 +187,7 @@ password() {
 case ${1:-} in
   start) shift; start "$@" ;;
   stop) stop ;;
-  status) status ;;
+  status) shift; status "$@" ;;
   log) tail -n "${2:-30}" "$log" 2>/dev/null || echo "no log yet" ;;
   password) shift; password "$@" ;;
   -h|--help|"") usage ;;

@@ -271,7 +271,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 | `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
-| `install-krdp.sh [--bundle [FILE] \| --uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd` |
+| `install-krdp.sh [--bundle [FILE] \| --uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd`, or KRdp Server in the menu |
 
 - **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
   distrobox. The first install also pulls the KDE runtime from Flathub, a few hundred MB, and
@@ -330,6 +330,11 @@ re-run updates. The header comment of each has the details and the uninstall ste
   the LAN (see [Firewall](#firewall)), and RDP brings its own TLS and login (NLA); `--address`
   with the tailnet address keeps it off the LAN. Over RDP, Frametop's screens you aren't looking
   at draw slowly, since only Frametop Remote Access asks ft-screens for full rate.
+- **KRdp Server**, the menu entry `install-krdp.sh` adds, is `bin/krdpd-gui`: a window that
+  starts and stops the same server and shows where to connect, the password, and the log. It runs
+  `krdpd` for everything, so the two never disagree, and the server keeps running after the window
+  closes. It's GTK 4 and libadwaita through Python, all in SteamOS's image, so it needs nothing
+  installed; run it on the host, from either desktop.
 - **`bin/bsmanager [--no-gpu] [HOST]`** shows the Frame's BSManager in a window on a Linux PC's
   Wayland desktop, through waypipe. In the headset, start BSManager from Steam instead. It runs in
   either of two places:

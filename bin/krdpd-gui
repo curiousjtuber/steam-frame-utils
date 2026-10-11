@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+# steam-frame-utils: a window for bin/krdpd, KRdp's RDP server for a Plasma desktop on the Frame.
+# Starts and stops it, shows where to connect and the password, and its log. Every action runs
+# krdpd itself (status through `krdpd status --keys`), so the two never disagree; the server
+# keeps running after the window closes. apps/install-krdp.sh adds it to the menu as KRdp Server.
+#
+# Usage:  krdpd-gui
+#
+# GTK 4 and libadwaita through PyGObject, all part of SteamOS's image, so nothing to install.
+# Run it on the host, from Desktop Mode or Frametop's desktop.
+
+import os
+import pwd
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+APP_ID = "io.github.curiousjtuber.Krdpd"
+KRDPD = os.path.join(os.path.dirname(os.path.realpath(__file__)), "krdpd")
+RUN = f"/run/user/{os.getuid()}"
+DESKTOPS = [("frametop", "Frametop's desktop"), ("stock", "SteamOS's Desktop")]
+POLL_SECONDS = 3
+
+
+def krdpd(args, done):
+    """Runs krdpd ARGS without blocking; done(ok, stdout, stderr)."""
+    proc = Gio.Subprocess.new([KRDPD, *args],
+                              Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE)
+
+    def finished(p, res):
+        try:
+            _, out, err = p.communicate_utf8_finish(res)
+        except GLib.Error as e:
+            done(False, "", e.message)
+            return
+        done(p.get_successful(), out or "", err or "")
+
+    proc.communicate_utf8_async(None, None, finished)
+
+
+def copy_button(text_of, tooltip):
+    b = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text=tooltip, valign=Gtk.Align.CENTER)
+    b.add_css_class("flat")
+    b.connect("clicked", lambda _: Gdk.Display.get_default().get_clipboard().set(text_of()))
+    return b
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="KRdp Server", default_width=520,
+                         default_height=760)
+        self.keys = {}
+        self.busy = False
+        self.polling = False
+        self.password = None  # the text, once shown or copied
+        self.defaults_set = False
+
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(self.toasts)
+        self.set_content(view)
+        page = Adw.PreferencesPage()
+        self.toasts.set_child(page)
+
+        # The server: state and the start/stop button.
+        server = Adw.PreferencesGroup()
+        page.add(server)
+        self.state_row = Adw.ActionRow(title="Checking…")
+        self.toggle = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.toggle.connect("clicked", self.on_toggle)
+        self.state_row.add_suffix(self.toggle)
+        server.add(self.state_row)
+
+        # Where to connect, while it runs.
+        self.connect_group = Adw.PreferencesGroup(
+            title="Connect to",
+            description="From KRDC, Remmina or Windows Remote Desktop; accept the Frame's "
+                        "certificate the first time.")
+        page.add(self.connect_group)
+        self.address_rows = []
+
+        # The password, kept in ~/.config/krdpd/password; the user is under Serve.
+        pw = Adw.PreferencesGroup(title="Login")
+        page.add(pw)
+        self.pw_row = Adw.ActionRow(title="Password")
+        self.pw_row.add_css_class("property")
+        self.reveal = Gtk.ToggleButton(icon_name="view-reveal-symbolic", tooltip_text="Show",
+                                       valign=Gtk.Align.CENTER)
+        self.reveal.add_css_class("flat")
+        self.reveal.connect("toggled", self.on_reveal)
+        self.pw_row.add_suffix(self.reveal)
+        self.pw_copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copy",
+                                  valign=Gtk.Align.CENTER)
+        self.pw_copy.add_css_class("flat")
+        self.pw_copy.connect("clicked", self.on_copy_password)
+        self.pw_row.add_suffix(self.pw_copy)
+        pw.add(self.pw_row)
+        change = Adw.ActionRow(title="Change the password")
+        generate = Gtk.Button(label="New random", valign=Gtk.Align.CENTER)
+        generate.connect("clicked", lambda _: self.set_password(["--generate"]))
+        own = Gtk.Button(label="Set…", valign=Gtk.Align.CENTER)
+        own.connect("clicked", self.on_set_password)
+        change.add_suffix(generate)
+        change.add_suffix(own)
+        pw.add(change)
+
+        # What the next start serves; while it runs, what it serves.
+        self.settings = Adw.PreferencesGroup(title="Serve")
+        page.add(self.settings)
+        self.desktop_row = Adw.ComboRow(title="Desktop",
+                                        model=Gtk.StringList.new([d[1] for d in DESKTOPS]))
+        self.settings.add(self.desktop_row)
+        self.listen_row = Adw.ComboRow(
+            title="Listen on", model=Gtk.StringList.new(["Every address", "The tailnet only"]))
+        self.settings.add(self.listen_row)
+        self.port_row = Adw.SpinRow.new_with_range(1025, 65535, 1)
+        self.port_row.set_title("Port")
+        self.port_row.set_subtitle("3389 is SteamOS's xrdp, 3390 Frametop Remote Access")
+        self.port_row.set_value(3391)
+        self.settings.add(self.port_row)
+        self.login_row = Adw.EntryRow(title="User name", text=pwd.getpwuid(os.getuid()).pw_name)
+        self.settings.add(self.login_row)
+
+        # krdpd's log.
+        log = Adw.PreferencesGroup()
+        page.add(log)
+        self.log_row = Adw.ExpanderRow(title="Log", subtitle="~/.local/state/krdpd.log")
+        self.log_row.connect("notify::expanded", lambda *_: self.load_log())
+        self.log_view = Gtk.TextView(editable=False, monospace=True, cursor_visible=False,
+                                     top_margin=6, bottom_margin=6, left_margin=6,
+                                     right_margin=6)
+        scroll = Gtk.ScrolledWindow(min_content_height=260, child=self.log_view)
+        self.log_row.add_row(scroll)
+        log.add(self.log_row)
+
+        self.refresh()
+        GLib.timeout_add_seconds(POLL_SECONDS, self.poll)
+
+    # --- status -------------------------------------------------------------------------------
+
+    def poll(self):
+        if not self.busy and not self.polling:
+            self.refresh()
+        return GLib.SOURCE_CONTINUE
+
+    def refresh(self):
+        self.polling = True
+
+        def done(ok, out, err):
+            self.polling = False
+            if not ok:
+                self.state_row.set_title("krdpd failed")
+                self.state_row.set_subtitle(err.strip())
+                return
+            self.keys = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+            self.show_status()
+
+        krdpd(["status", "--keys"], done)
+
+    def show_status(self):
+        k = self.keys
+        installed = k.get("installed") == "yes"
+        running = k.get("running") == "yes"
+        if not self.defaults_set:
+            # Frametop's when it runs, as krdpd's own default.
+            if k.get("frametop") != "yes" and k.get("stock") == "yes":
+                self.desktop_row.set_selected(1)
+            self.defaults_set = True
+
+        if not installed:
+            self.state_row.set_title("Not installed")
+            self.state_row.set_subtitle("Run ~/steam-frame-utils/apps/install-krdp.sh")
+        elif running:
+            self.state_row.set_title(f"Serving {self.desktop_name(k.get('desktop', ''))}")
+            self.state_row.set_subtitle(f"port {k.get('port', '?')}, pid {k.get('pid', '?')}")
+        else:
+            self.state_row.set_title("Stopped")
+            self.state_row.set_subtitle("")
+        self.set_toggle(running, installed)
+
+        self.connect_group.set_visible(running)
+        if running:
+            self.show_addresses()
+            self.port_row.set_value(int(k.get("port", "3391") or 3391))
+            self.login_row.set_text(k.get("user", ""))
+            self.listen_row.set_selected(0 if k.get("address", "0.0.0.0") in ("0.0.0.0", "::")
+                                         else 1)
+            d = k.get("desktop", "")
+            self.desktop_row.set_selected(1 if d == f"{RUN}/nested_plasma" else 0)
+        self.settings.set_sensitive(not running and not self.busy)
+        self.desktop_row.set_subtitle(self.desktops_up())
+        tail = k.get("tailnet_ip", "")
+        self.listen_row.set_subtitle(f"tailnet address {tail}" if tail else "no tailnet")
+
+        has_pw = k.get("password") == "yes"
+        self.reveal.set_sensitive(has_pw)
+        self.pw_copy.set_sensitive(has_pw)
+        if not has_pw:
+            self.password = None
+            self.pw_row.set_subtitle("none yet: made at the first start")
+        elif not self.reveal.get_active():
+            self.pw_row.set_subtitle("••••••••••••")
+        if self.log_row.get_expanded():
+            self.load_log()
+
+    def desktop_name(self, d):
+        return {f"{RUN}/frametop": "Frametop's desktop",
+                f"{RUN}/nested_plasma": "SteamOS's Desktop"}.get(d, d or "?")
+
+    def desktops_up(self):
+        up = [name for key, name in DESKTOPS if self.keys.get(key) == "yes"]
+        return "running: " + ", ".join(up) if up else "neither desktop is running"
+
+    def show_addresses(self):
+        k = self.keys
+        port = k.get("port", "3391")
+        address = k.get("address", "0.0.0.0")
+        if address in ("0.0.0.0", "::"):
+            found = [(f"{k.get('hostname', '')}.local:{port}", "the Frame's name on the LAN")]
+            if k.get("lan_ip"):
+                found.append((f"{k['lan_ip']}:{port}", "LAN"))
+            if k.get("tailnet_ip"):
+                found.append((f"{k['tailnet_ip']}:{port}", "tailnet"))
+        else:
+            found = [(f"{address}:{port}", "the only address it listens on")]
+        if [r.get_title() for r in self.address_rows] == [a for a, _ in found]:
+            return
+        for r in self.address_rows:
+            self.connect_group.remove(r)
+        self.address_rows = []
+        for addr, what in found:
+            row = Adw.ActionRow(title=addr, subtitle=what)
+            row.add_suffix(copy_button(lambda a=addr: a, "Copy"))
+            self.connect_group.add(row)
+            self.address_rows.append(row)
+
+    def set_toggle(self, running, installed):
+        for c in ("suggested-action", "destructive-action"):
+            self.toggle.remove_css_class(c)
+        if self.busy:
+            self.toggle.set_sensitive(False)
+            return
+        self.toggle.set_sensitive(installed)
+        self.toggle.set_label("Stop" if running else "Start")
+        self.toggle.add_css_class("destructive-action" if running else "suggested-action")
+
+    def load_log(self):
+        krdpd(["log", "200"], lambda ok, out, err: self.log_view.get_buffer().set_text(
+            out if ok else err))
+
+    # --- start and stop -----------------------------------------------------------------------
+
+    def run(self, args, label, then=None):
+        """krdpd ARGS with the buttons off; a failure's message in a dialog."""
+        self.busy = True
+        self.toggle.set_sensitive(False)
+        self.toggle.set_label(label)
+        self.settings.set_sensitive(False)
+
+        def done(ok, out, err):
+            self.busy = False
+            if not ok:
+                self.alert("krdpd " + args[0] + " failed", (err or out).strip())
+            elif then:
+                then()
+            self.refresh()
+            if not ok:
+                self.log_row.set_expanded(True)
+
+        krdpd(args, done)
+
+    def on_toggle(self, _):
+        if self.keys.get("running") == "yes":
+            self.run(["stop"], "Stopping…")
+            return
+        desktop = DESKTOPS[self.desktop_row.get_selected()][0]
+        if desktop == "stock":
+            d = Adw.AlertDialog.new(
+                "Serve SteamOS's Desktop?",
+                "On SteamOS 0.4.5 its KWin crashes in its screencast plugin as soon as a "
+                "client connects, leaving a bare KWin that only logging out of it clears.")
+            d.add_response("cancel", "Cancel")
+            d.add_response("start", "Start anyway")
+            d.set_response_appearance("start", Adw.ResponseAppearance.DESTRUCTIVE)
+            d.connect("response", lambda _d, r: r == "start" and self.start(["--force"]))
+            d.present(self)
+            return
+        self.start([])
+
+    def start(self, extra, then=None):
+        args = ["start", "--desktop", DESKTOPS[self.desktop_row.get_selected()][0],
+                "--port", str(int(self.port_row.get_value()))]
+        user = self.login_row.get_text().strip()
+        if user:
+            args += ["--user", user]
+        if self.listen_row.get_selected() == 1:
+            tail = self.keys.get("tailnet_ip")
+            if not tail:
+                self.alert("No tailnet address", "Tailscale isn't up on the Frame.")
+                return
+            args += ["--address", tail]
+        self.run(args + extra, "Starting…", then)
+
+    def restart(self):
+        """Stop, then start with what it served (the settings show that while it runs)."""
+        force = ["--force"] if self.keys.get("desktop") == f"{RUN}/nested_plasma" else []
+        self.run(["stop"], "Stopping…", lambda: self.start(force, lambda: self.toast(
+            "Restarted with the new password")))
+
+    # --- password -----------------------------------------------------------------------------
+
+    def with_password(self, use):
+        def done(ok, out, err):
+            if ok:
+                self.password = out.splitlines()[0] if out else ""
+                use(self.password)
+            else:
+                self.alert("Couldn't read the password", err.strip())
+        krdpd(["password"], done)
+
+    def on_reveal(self, button):
+        button.set_icon_name("view-conceal-symbolic" if button.get_active()
+                             else "view-reveal-symbolic")
+        if button.get_active():
+            self.with_password(self.pw_row.set_subtitle)
+        else:
+            self.pw_row.set_subtitle("••••••••••••")
+
+    def on_copy_password(self, _):
+        def copy(text):
+            Gdk.Display.get_default().get_clipboard().set(text)
+            self.toast("Password copied")
+        self.with_password(copy)
+
+    def on_set_password(self, _):
+        entry = Adw.PasswordEntryRow(title="New password")
+        box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        box.add_css_class("boxed-list")
+        box.append(entry)
+        d = Adw.AlertDialog.new("Set the password", None)
+        d.set_extra_child(box)
+        d.add_response("cancel", "Cancel")
+        d.add_response("set", "Set")
+        d.set_response_appearance("set", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("set")
+        def activated(_):
+            d.close()
+            self.set_password_to(entry)
+        entry.connect("entry-activated", activated)
+
+        def response(_d, r):
+            if r == "set":
+                self.set_password_to(entry)
+        d.connect("response", response)
+        d.present(self)
+
+    def set_password_to(self, entry):
+        text = entry.get_text()
+        if not text.strip():
+            self.alert("Empty password", "Give one, or use New random.")
+            return
+        self.set_password([text])
+
+    def set_password(self, args):
+        def done(ok, out, err):
+            if not ok:
+                self.alert("Couldn't change the password", err.strip())
+                return
+            self.password = None
+            if self.reveal.get_active():
+                self.with_password(self.pw_row.set_subtitle)
+            if self.keys.get("running") == "yes":
+                t = Adw.Toast(title="New password set: restart the server to use it",
+                              button_label="Restart", timeout=0)
+                t.connect("button-clicked", lambda _: self.restart())
+                self.toasts.add_toast(t)
+            else:
+                self.toast("New password set")
+            self.refresh()
+        krdpd(["password", *args], done)
+
+    # --- feedback -----------------------------------------------------------------------------
+
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=text))
+
+    def alert(self, heading, body):
+        d = Adw.AlertDialog.new(heading, body)
+        d.add_response("ok", "OK")
+        d.present(self)
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+
+    def do_activate(self):
+        (self.get_active_window() or Window(self)).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))

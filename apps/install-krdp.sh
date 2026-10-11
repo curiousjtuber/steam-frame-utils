@@ -2,14 +2,16 @@
 # Build and install KRdp's server, krdpserver (Plasma's Remote Desktop), as a flatpak for the
 # Frame, from apps/krdp/io.github.curiousjtuber.Krdp.yml. It serves a Plasma desktop running on
 # the Frame (Frametop's or the stock one) over RDP, for KRDC, Remmina or Windows Remote Desktop;
-# bin/krdpd starts and stops it. https://invent.kde.org/plasma/krdp
+# bin/krdpd starts and stops it, and so does KRdp Server in the menu (bin/krdpd-gui), which this
+# adds as well. https://invent.kde.org/plasma/krdp
 #
 # Usage:  ~/steam-frame-utils/apps/install-krdp.sh [--bundle [FILE] | --uninstall]
 #
 # --bundle     after building and installing, also write the app as a single-file bundle, FILE
 #              (default ./io.github.curiousjtuber.Krdp.flatpak), for another aarch64 device:
 #              flatpak --user install FILE  (it gets the KDE runtime from Flathub; no build there)
-# --uninstall  remove the app; the SDK and builder stay (the line to drop them is printed)
+# --uninstall  remove the app and its menu entry; the SDK and builder stay (the line to drop
+#              them is printed)
 #
 # SteamOS has no krdp, Flathub has no krdpserver (only the KRDC client), and anything built
 # against the image's Plasma breaks at the next SteamOS update, so this builds it on KDE's
@@ -33,11 +35,13 @@
 set -euo pipefail
 
 APP=io.github.curiousjtuber.Krdp
+GUI=io.github.curiousjtuber.Krdpd  # bin/krdpd-gui's app id: KWin matches the window to this entry
 SDK=org.kde.Sdk//6.11
 REPO_FILE=https://dl.flathub.org/repo/flathub.flatpakrepo
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 manifest=$here/krdp/$APP.yml
 state=${XDG_CACHE_HOME:-$HOME/.cache}/krdpd/flatpak
+menu=$HOME/.local/share/applications/$GUI.desktop
 
 usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
 die() { echo "install-krdp.sh: $*" >&2; exit 1; }
@@ -48,6 +52,7 @@ case ${1:-} in
   --bundle) bundle=${2:-$PWD/$APP.flatpak} ;;
   --uninstall)
     flatpak --user uninstall -y --noninteractive "$APP" 2>/dev/null && echo "removed $APP" || echo "$APP wasn't installed"
+    rm -f "$menu"
     echo "the build tools stay: flatpak --user uninstall $SDK org.flatpak.Builder"
     exit 0 ;;
   -h|--help) usage; exit 0 ;;
@@ -74,6 +79,22 @@ else
   echo "installed $APP ($(flatpak --user info "$APP" 2>/dev/null | sed -n 's/^ *Commit: \(.\{12\}\).*/\1/p'))"
   echo "start it with: krdpd start   (see krdpd --help)"
 fi
+
+# The menu entry, in the home folder's applications, which both desktops' menus read. Rewritten
+# every run, so it follows this checkout if it moves.
+mkdir -p "$(dirname "$menu")"
+cat > "$menu" <<EOF
+[Desktop Entry]
+Type=Application
+Name=KRdp Server
+GenericName=Remote Desktop Server
+Comment=Serve this Plasma desktop over RDP: start, stop, where to connect, the password
+Exec=$(cd "$here/.." && pwd)/bin/krdpd-gui
+Icon=krfb
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=rdp;remote;krdp;krdpd;
+EOF
 
 # flatpak-builder exports each build to the ostree repo in its state dir; the bundle comes from
 # there, and names Flathub so the installing side can fetch the runtime itself.
