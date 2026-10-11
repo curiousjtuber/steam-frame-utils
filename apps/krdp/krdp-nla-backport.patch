@@ -1,0 +1,265 @@
+krdp 6.7.5: NLA logins, backported unchanged from krdp's Plasma/6.8 branch (cherry-picked onto
+v6.7.5 with no conflicts). 6.7.5 has no NLA: it takes the password over TLS and compares it in
+onPostConnect, which FreeRDP 3.32 clients (krdc 26.08) leave empty. These write the users to a
+SAM file, turn NLA on when PAM isn't in use, and keep FreeRDP 3.32's extended security off.
+  a5c6f54 Conditionally re-enable NLA autentication
+  7a803ab Fix NLA authentication
+  31824f9 Fix authentication with FreeRDP 3.32 (cherry picked from f868133)
+Drop once krdp 6.8.0 is out and the kpipewire it needs is too.
+
+From 17f2685564cca9d6dc2d8de8f1841ecfd8f4a43b Mon Sep 17 00:00:00 2001
+From: David Edmundson <kde@davidedmundson.co.uk>
+Date: Thu, 30 Jul 2026 11:33:15 +0100
+Subject: [PATCH 1/3] Conditionally re-enable NLA autentication
+
+318cc2842eff8445b6a6718d5262a7366eba9f05 added support for login using
+passwords from PAM.
+
+This has the side effect of needing us to disable NLA. NLA sends only a
+hashed version of the password, not a plain text version.
+(this plain text password is still over TLS so secure)
+
+(cherry picked from commit a5c6f5470cf75f27054296bf1a4aa3893006549f)
+---
+ src/RdpConnection.cpp | 62 +++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/src/RdpConnection.cpp b/src/RdpConnection.cpp
+index 797d10b..0d1adb3 100644
+--- a/src/RdpConnection.cpp
++++ b/src/RdpConnection.cpp
+@@ -16,6 +16,7 @@
+ #include <QHostAddress>
+ #include <QStandardPaths>
+ #include <QTcpSocket>
++#include <QTemporaryFile>
+ #include <QThread>
+ 
+ #include <freerdp/channels/wtsvc.h>
+@@ -41,6 +42,47 @@ namespace fs = std::filesystem;
+ namespace KRdp
+ {
+ 
++/**
++ * Create the "sam" file used by FreeRDP for reading username and password
++ * information. It hashes the password in the appropriate format and writes that
++ * along with the username to the provided temporary file.
++ */
++static bool createSamFile(QTemporaryFile &file, const QList<User> &users)
++{
++    auto runtimePath = fs::path(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation).toStdString());
++
++    auto path = runtimePath / "krdp";
++    fs::create_directories(path);
++
++    file.setFileTemplate(QString::fromStdString(path / "rdp-sam-XXXXXX"));
++    if (!file.open()) {
++        qCWarning(KRDP) << "Could not open SAM file";
++        return false;
++    }
++
++    QString data;
++
++    for (const auto &user : users) {
++        auto username = user.name;
++        auto password = user.password.toUtf8();
++
++        std::array<uint8_t, 16> hash;
++        NTOWFv1A((LPSTR)password.data(), password.size(), hash.data());
++
++        auto entry = QStringLiteral("%1:::").arg(username);
++        for (int i = 0; i < 16; ++i) {
++            entry.append(QStringLiteral("%1").arg(hash[i], 2, 16, QLatin1Char('0')));
++        }
++        entry.append(QStringLiteral(":::\n"));
++        data.append(entry);
++    }
++
++    file.write(data.toUtf8());
++    file.close();
++
++    return true;
++}
++
+ #include <security/pam_appl.h>
+ 
+ typedef struct {
+@@ -210,6 +252,7 @@ public:
+     freerdp_peer *peer = nullptr;
+ 
+     std::jthread thread;
++    QTemporaryFile samFile;
+ };
+ 
+ RdpConnection::RdpConnection(Server *server, qintptr socketHandle)
+@@ -339,6 +382,19 @@ void RdpConnection::initialize()
+ 
+     auto settings = d->peer->context->settings;
+ 
++    const bool usePamAuthentication = d->server->usePAMAuthentication();
++
++    if (!usePamAuthentication) {
++        if (!createSamFile(d->samFile, d->server->users())) {
++            return;
++        }
++
++        if (!freerdp_settings_set_string(settings, FreeRDP_NtlmSamFile, d->samFile.fileName().toUtf8().constData())) {
++            qCWarning(KRDP) << "Failed to set SAM database";
++            return;
++        }
++    }
++
+     auto certificate = freerdp_certificate_new_from_file(d->server->tlsCertificate().string().data());
+     if (!certificate) {
+         qCWarning(KRDP) << "Could not read certificate file" << d->server->tlsCertificate().string();
+@@ -354,8 +410,8 @@ void RdpConnection::initialize()
+     freerdp_settings_set_pointer_len(settings, FreeRDP_RdpServerRsaKey, key, 1);
+ 
+     freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, false);
+-    freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, true);
+-    freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, false);
++    freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, usePamAuthentication);
++    freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, !usePamAuthentication);
+ 
+     freerdp_settings_set_uint32(settings, FreeRDP_OsMajorType, OSMAJORTYPE_UNIX);
+     // PSEUDO_XSERVER is apparently required for things to work properly.
+@@ -527,6 +583,8 @@ bool RdpConnection::onPostConnect()
+ {
+     qCInfo(KRDP) << "New client connected:" << d->peer->hostname << freerdp_peer_os_major_type_string(d->peer) << freerdp_peer_os_minor_type_string(d->peer);
+ 
++    d->samFile.remove();
++
+     rdpSettings *settings = d->peer->context->settings;
+ 
+     if (!freerdp_settings_set_bool(settings, FreeRDP_AutoLogonEnabled, true)) {
+-- 
+2.56.0
+
+
+From 7d0f6579d8eba8c6c6aafa0f5d18fd10ea522041 Mon Sep 17 00:00:00 2001
+From: David Edmundson <kde@davidedmundson.co.uk>
+Date: Thu, 6 Aug 2026 11:04:19 +0100
+Subject: [PATCH 2/3] Fix NLA authentication
+
+The point of NLA authentication is the password is never sent, but a
+hashed version is compared by RDP against the SAM database.
+
+In this case we don't want to try checking the passwords ourselves
+
+Ammends a5c6f5470cf75f27054296bf1a4aa3893006549f
+
+(cherry picked from commit 7a803ab9b33cf6a96130a484a853525e10284006)
+---
+ src/RdpConnection.cpp | 39 ++++++++++++++++++++-------------------
+ 1 file changed, 20 insertions(+), 19 deletions(-)
+
+diff --git a/src/RdpConnection.cpp b/src/RdpConnection.cpp
+index 0d1adb3..4d63fd6 100644
+--- a/src/RdpConnection.cpp
++++ b/src/RdpConnection.cpp
+@@ -386,11 +386,12 @@ void RdpConnection::initialize()
+ 
+     if (!usePamAuthentication) {
+         if (!createSamFile(d->samFile, d->server->users())) {
++            qFatal("Failed to create SAM database");
+             return;
+         }
+ 
+         if (!freerdp_settings_set_string(settings, FreeRDP_NtlmSamFile, d->samFile.fileName().toUtf8().constData())) {
+-            qCWarning(KRDP) << "Failed to set SAM database";
++            qFatal("Failed to set SAM database");
+             return;
+         }
+     }
+@@ -586,34 +587,34 @@ bool RdpConnection::onPostConnect()
+     d->samFile.remove();
+ 
+     rdpSettings *settings = d->peer->context->settings;
+-
+-    if (!freerdp_settings_set_bool(settings, FreeRDP_AutoLogonEnabled, true)) {
+-        return false;
+-    }
+-
+     const QString username = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Username));
+-    const QString password = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Password));
+ 
+     if (d->server->usePAMAuthentication()) {
++        if (!freerdp_settings_set_bool(settings, FreeRDP_AutoLogonEnabled, true)) {
++            return false;
++        }
++
++        const QString password = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Password));
+         qCDebug(KRDP) << "Attempting authenticating user with PAM";
+         if (username == KUser().loginName() && pamAuthenticate(username, password) >= 0) {
+             qCDebug(KRDP) << "PAM authentication succeeded for user" << username;
+             return true;
+         }
+-    }
+-
+-    const auto users = d->server->users();
+-    for (auto user : users) {
+-        if (user.password.isEmpty()) {
+-            return false;
+-        }
+-        if (user.name == username && user.password == password) {
+-            qCDebug(KRDP) << "User" << username << "authenticated successfully";
+-            return true;
++        const auto users = d->server->users();
++        for (auto user : users) {
++            if (user.password.isEmpty()) {
++                return false;
++            }
++            if (user.name == username && user.password == password) {
++                qCDebug(KRDP) << "User" << username << "authenticated successfully";
++                return true;
++            }
+         }
++        return false;
++    } else {
++        // In the NLA case the user has been authorised against the SAM database
++        return true;
+     }
+-
+-    return false;
+ }
+ 
+ bool RdpConnection::onClose()
+-- 
+2.56.0
+
+
+From 395d63013dbe730fa5de9249fa3d9f0734b5399b Mon Sep 17 00:00:00 2001
+From: David Edmundson <kde@davidedmundson.co.uk>
+Date: Fri, 2 Oct 2026 14:50:48 +0000
+Subject: [PATCH 3/3] Fix authentication with FreeRDP 3.32
+
+FreeRDP 3.32 enables extended security by default. This causes
+PROTOCOL_HYBRID_EX to be selected even when KRDP explicitly selects
+TLS or NLA for its authentication mode.
+
+Explicitly disable extended security so that KRDP's configured
+security mode is used.
+
+(cherry picked from commit f868133d9115a3bc2f02287fed57bf94f9ccad50)
+
+Co-authored-by: Ben Marshall <ceylon@leavesoftea.net>
+(cherry picked from commit 31824f94c16bb4ccfc7739c2669bda1b3f5ca94b)
+---
+ src/RdpConnection.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/RdpConnection.cpp b/src/RdpConnection.cpp
+index 4d63fd6..b088046 100644
+--- a/src/RdpConnection.cpp
++++ b/src/RdpConnection.cpp
+@@ -413,6 +413,7 @@ void RdpConnection::initialize()
+     freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, false);
+     freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, usePamAuthentication);
+     freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, !usePamAuthentication);
++    freerdp_settings_set_bool(settings, FreeRDP_ExtSecurity, false);
+ 
+     freerdp_settings_set_uint32(settings, FreeRDP_OsMajorType, OSMAJORTYPE_UNIX);
+     // PSEUDO_XSERVER is apparently required for things to work properly.
+-- 
+2.56.0
+

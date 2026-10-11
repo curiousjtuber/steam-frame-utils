@@ -308,9 +308,9 @@ re-run updates. The header comment of each has the details and the uninstall ste
   Plasma desktop that runs on it (Frametop's, or SteamOS's stock Desktop) from a PC. SteamOS has
   no krdp and Flathub only has the client, so `install-krdp.sh` builds it as a flatpak on KDE's
   runtime, with its own FreeRDP and kpipewire, pinned and patched as the manifest in `apps/krdp/`
-  explains (FreeRDP 3.32 breaks krdp's login; kpipewire crashes on the 256 px cursor gamescope
-  sets; krdp 6.7.5 rejects FreeRDP 3.32 clients after NLA). The first run installs the KDE 6.11
-  SDK and flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
+  explains (krdp 6.7.5 gets 6.8's NLA login, which works with FreeRDP 3.32 clients; kpipewire
+  crashes on the 256 px cursor gamescope sets). The first run installs the KDE 6.11 SDK and
+  flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
   rebuild only what changed. KWin lets the sandboxed server capture through the app's desktop
   file, so neither desktop needs KWin's permission checks turned off. Nothing starts it by
   itself. `--bundle` also writes the build as one `.flatpak` file, which another aarch64 device
