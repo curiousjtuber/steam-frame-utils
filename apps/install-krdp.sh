@@ -4,8 +4,11 @@
 # the Frame (Frametop's or the stock one) over RDP, for KRDC, Remmina or Windows Remote Desktop;
 # bin/krdpd starts and stops it. https://invent.kde.org/plasma/krdp
 #
-# Usage:  ~/steam-frame-utils/apps/install-krdp.sh [--uninstall]
+# Usage:  ~/steam-frame-utils/apps/install-krdp.sh [--bundle [FILE] | --uninstall]
 #
+# --bundle     after building and installing, also write the app as a single-file bundle, FILE
+#              (default ./io.github.curiousjtuber.Krdp.flatpak), for another aarch64 device:
+#              flatpak --user install FILE  (it gets the KDE runtime from Flathub; no build there)
 # --uninstall  remove the app; the SDK and builder stay (the line to drop them is printed)
 #
 # SteamOS has no krdp, Flathub has no krdpserver (only the KRDC client), and anything built
@@ -39,8 +42,10 @@ state=${XDG_CACHE_HOME:-$HOME/.cache}/krdpd/flatpak
 usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
 die() { echo "install-krdp.sh: $*" >&2; exit 1; }
 
+bundle=
 case ${1:-} in
   "") ;;
+  --bundle) bundle=${2:-$PWD/$APP.flatpak} ;;
   --uninstall)
     flatpak --user uninstall -y --noninteractive "$APP" 2>/dev/null && echo "removed $APP" || echo "$APP wasn't installed"
     echo "the build tools stay: flatpak --user uninstall $SDK org.flatpak.Builder"
@@ -61,11 +66,18 @@ mkdir -p "$state"
 stamp=$(cat "$manifest" "$here"/krdp/*.patch | sha256sum | cut -c1-16)
 if flatpak --user info "$APP" >/dev/null 2>&1 && [ "$(cat "$state/installed" 2>/dev/null)" = "$stamp" ]; then
   echo "$APP: installed and up to date with the manifest"
-  exit 0
+else
+  echo "building $APP (about half an hour the first time)"
+  flatpak run org.flatpak.Builder --user --install --force-clean --install-deps-from=flathub \
+    --state-dir="$state/state" "$state/build" "$manifest"
+  echo "$stamp" > "$state/installed"
+  echo "installed $APP ($(flatpak --user info "$APP" 2>/dev/null | sed -n 's/^ *Commit: \(.\{12\}\).*/\1/p'))"
+  echo "start it with: krdpd start   (see krdpd --help)"
 fi
-echo "building $APP (about half an hour the first time)"
-flatpak run org.flatpak.Builder --user --install --force-clean --install-deps-from=flathub \
-  --state-dir="$state/state" "$state/build" "$manifest"
-echo "$stamp" > "$state/installed"
-echo "installed $APP ($(flatpak --user info "$APP" 2>/dev/null | sed -n 's/^ *Commit: \(.\{12\}\).*/\1/p'))"
-echo "start it with: krdpd start   (see krdpd --help)"
+
+# flatpak-builder exports each build to the ostree repo in its state dir; the bundle comes from
+# there, and names Flathub so the installing side can fetch the runtime itself.
+if [ -n "$bundle" ]; then
+  flatpak build-bundle --runtime-repo="$REPO_FILE" "$state/state/cache" "$bundle" "$APP" master
+  echo "wrote $bundle ($(du -h "$bundle" | cut -f1)); install it with: flatpak --user install $bundle"
+fi

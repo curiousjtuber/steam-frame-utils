@@ -271,7 +271,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 | `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
-| `install-krdp.sh [--uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd` |
+| `install-krdp.sh [--bundle [FILE] \| --uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd` |
 
 - **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
   distrobox. The first install also pulls the KDE runtime from Flathub, a few hundred MB, and
@@ -313,7 +313,8 @@ re-run updates. The header comment of each has the details and the uninstall ste
   SDK and flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
   rebuild only what changed. KWin lets the sandboxed server capture through the app's desktop
   file, so neither desktop needs KWin's permission checks turned off. Nothing starts it by
-  itself.
+  itself. `--bundle` also writes the build as one `.flatpak` file, which another aarch64 device
+  installs with `flatpak --user install FILE` and no build; the releases page has one.
 - **`bin/krdpd start [--desktop frametop|stock|DIR] [--port N] [--user NAME] [--address ADDR]`**,
   `stop`, `status`, `log`, `password [NEW | --generate]` runs that server by hand. It serves
   Frametop's desktop when that runs (the stock Desktop only with `--force`: on SteamOS 0.4.5 its
