@@ -29,6 +29,21 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ## Setup
 
 ```bash
+~/steam-frame-utils/setup.sh
+```
+
+With no options, on a terminal, it is an interactive installer: it goes through the options
+below in its usual order, and each part that is installed shows as `ok` and is kept current, as
+if its option were given, while each part that is missing is asked about there and installed
+right away. emacs and waypipe are asked as host, box or neither. Each change to `~/.bashrc`,
+`~/.zshrc`, `~/.profile` or `~/.distroboxrc` is shown as a diff and asked about, and the file is
+copied to `<file>.bak-<timestamp>` before the run first changes it. Enter takes the default, yes on
+a first run (the [fresh-Frame](#a-fresh-frame) set) and no on a re-run, so pressing Enter all
+the way through a re-run adds nothing. Switching a route in place takes the option. Inside a
+distrobox it asks only what the box allows. Without a terminal, or with any option, it asks
+nothing.
+
+```bash
 ~/steam-frame-utils/setup.sh --check
 ```
 
@@ -39,7 +54,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 `--check` reports what would change and changes nothing. A re-run touches only what is missing or
 out of date, so after pulling this repo, run it again.
 
-With no options:
+Always, whatever the options:
 
 | What | How |
 |---|---|

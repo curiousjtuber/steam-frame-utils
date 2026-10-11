@@ -6,9 +6,17 @@
 #                   [--waypipe[=host|box]] [--mise] [--packages[=NAME,...]]
 #                   [--tailscale[=trust]] [--nerd-fonts[=NAME,...]]
 #
-# With no options it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block
-# that finds bin/podman, the Desktop Mode cursor fix, the desktops' cursor size, and, in ~/.bashrc
-# and ~/.zshrc, this checkout's bin/ on PATH and the Frametop desktop terminal fix.
+# Always, it puts ~/.local/bin on PATH, and installs distrobox, the ~/.distroboxrc block that
+# finds bin/podman, the Desktop Mode cursor fix, the desktops' cursor size, and, in ~/.bashrc and
+# ~/.zshrc, this checkout's bin/ on PATH and the Frametop desktop terminal fix. The options add
+# the rest.
+#
+# With no options at all, on a terminal, it is interactive: each optional part is checked in its
+# turn, as if its option were given when it is installed, and when it is missing it asks, then
+# installs it right away. Each change to ~/.bashrc, ~/.zshrc, ~/.profile or ~/.distroboxrc is
+# shown as a diff and asked about, and the file is backed up before its first change. Enter takes
+# the default: yes on a first run (the fresh-Frame set of README.md), no on a re-run. Without a
+# terminal, or with any option (--check alone, say), it asks nothing.
 #
 # --check           report what would change, and change nothing
 # --yes             answer yes: create the arch box, and replace an installed emacs or waypipe
@@ -82,6 +90,7 @@ PRE_INIT_HOOK="sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf"
 IN_BOX_RUN=${SFU_IN_BOX:-}
 PACMAN_HOME=$SRC/bin/pacman-home
 WAYPIPE=$HOME/.local/bin/waypipe
+DEFAULT_FONTS=JetBrainsMono,NerdFontsSymbolsOnly
 
 check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_emacs=0 want_waypipe=0 want_mise=0
 want_packages=0
@@ -106,7 +115,7 @@ for arg in "$@"; do
     --packages=?*) want_packages=1 packages=${arg#*=} ;;
     --tailscale) tailscale=plain ;;
     --tailscale=trust) tailscale=trust ;;
-    --nerd-fonts) nerd_fonts=JetBrainsMono,NerdFontsSymbolsOnly ;;
+    --nerd-fonts) nerd_fonts=$DEFAULT_FONTS ;;
     --nerd-fonts=?*) nerd_fonts=${arg#*=} ;;
     -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
@@ -125,6 +134,55 @@ die()  { echo "setup.sh: $*" >&2; exit 1; }
 append() {
   [[ -s $1 && $(tail -c1 "$1") != '' ]] && printf '\n' >> "$1"
   cat >> "$1"
+}
+
+# The shell and distrobox rc files are changed through these two. Interactive, each change is
+# shown as a diff and asked about, and a file is copied to <file>.bak-<timestamp> before the run
+# first changes it; otherwise they write straight away.
+declare -A rc_backed_up rc_declined
+# rc_write FILE NEW -- NEW, a file next to FILE, replaces it. A file whose creation was declined
+# is left out for the rest of the run.
+rc_write() {
+  local file=$1 new=$2
+  if (( interactive )); then
+    if [[ -n ${rc_declined[$file]:-} ]]; then
+      command rm -f "$new"
+      say "skip" "$file: not created"
+      return 0
+    fi
+    local old=$file
+    [[ -e $file ]] || old=/dev/null
+    diff -u --color=auto --label "${file/#$HOME/\~}" --label "${file/#$HOME/\~} (new)" \
+      "$old" "$new" || true
+    # Ctrl-C or the end of input at the question exits; the trap takes NEW with it.
+    rc_pending=$new
+    trap '[[ -n ${rc_pending:-} ]] && command rm -f "$rc_pending"' EXIT
+    ask "Change ${file/#$HOME/\~}?" yes yes no
+    rc_pending=
+    if [[ $answer == no ]]; then
+      command rm -f "$new"
+      if [[ -e $file ]]; then say "skip" "$file: left as it was"
+      else say "skip" "$file: not created"; rc_declined[$file]=1
+      fi
+      return 0
+    fi
+    if [[ -e $file && -z ${rc_backed_up[$file]:-} ]]; then
+      command cp -p "$file" "$file.bak-$STAMP"
+      say "back up" "$file -> $file.bak-$STAMP"
+    fi
+    rc_backed_up[$file]=1
+  fi
+  command mv -f "$new" "$file"
+}
+# rc_append FILE TEXT -- TEXT goes after FILE's last line, as by append
+rc_append() {
+  if (( ! interactive )); then
+    printf '%s\n' "$2" | append "$1"
+    return
+  fi
+  if [[ -e $1 ]]; then command cp -p "$1" "$1.tmp.$$"; else : > "$1.tmp.$$"; fi
+  printf '%s\n' "$2" | append "$1.tmp.$$"
+  rc_write "$1" "$1.tmp.$$"
 }
 
 backup() {
@@ -168,15 +226,15 @@ ensure_block() {
       $0 == b { print; while ((getline l < f) > 0) print l; skip = 1; next }
       $0 == e { skip = 0 }
       !skip' "$file" > "$file.tmp.$$"
-    command mv -f "$file.tmp.$$" "$file"
+    rc_write "$file" "$file.tmp.$$"
   else
     act "$file: block $name" "add"
     (( check )) && return
     if [[ $where == top && -s $file ]]; then
       { printf '%s\n' "$want"; cat "$file"; } > "$file.tmp.$$"
-      command mv -f "$file.tmp.$$" "$file"
+      rc_write "$file" "$file.tmp.$$"
     else
-      printf '%s\n' "$want" | append "$file"
+      rc_append "$file" "$want"
     fi
   fi
 }
@@ -201,7 +259,7 @@ remove_block() {
   (( check )) && return
   awk -v b="$begin" -v e="$end" '$0 == b { skip = 1 } !skip; $0 == e { skip = 0 }' "$file" \
     > "$file.tmp.$$"
-  command mv -f "$file.tmp.$$" "$file"
+  rc_write "$file" "$file.tmp.$$"
 }
 
 # --- Where we are -------------------------------------------------------------------------------
@@ -242,10 +300,79 @@ route_of() {
   fi
 }
 
+# --- No options, on a terminal: interactive -------------------------------------------------------
+# Each optional part is checked where its option would take it up. What is installed is kept
+# current without a question, as if its option were given; what is missing is asked about there,
+# and installed right away. A missing part defaults to yes on a first run (no rc block yet),
+# README.md's fresh-Frame set, and to no on a re-run. Switching a route in place takes the option.
+
+interactive=0 dflt=no
+if (( $# == 0 )) && [[ -z $IN_BOX_RUN && -t 0 && -t 1 ]]; then
+  interactive=1
+  grep -qxF '# >>> steam-frame-utils: top >>>' "$HOME/.bashrc" 2>/dev/null || dflt=yes
+  echo "Each part is checked; what is missing is asked about. Enter takes the answer in brackets."
+fi
+# What this run can take up: the host's parts, and the arch box's.
+host_ok=1 box_ok=1
+[[ -n $box ]] && host_ok=0
+[[ -n $box && $box != "$BOX" ]] && box_ok=0
+
+# ask PROMPT DEFAULT CHOICE... -- $answer is the CHOICE that the reply begins, DEFAULT on Enter
+ask() {
+  local prompt=$1 default=$2 reply choice shown
+  shift 2
+  if [[ "$*" == "yes no" ]]; then
+    if [[ $default == yes ]]; then shown="[Y/n]"; else shown="[y/N]"; fi
+  else
+    shown="$*"; shown="${shown// //} [$default]"
+  fi
+  while :; do
+    read -r -p "$prompt $shown " reply </dev/tty || { echo; exit 1; }
+    reply=${reply:-$default}
+    for choice; do
+      if [[ $choice == "${reply,,}"* ]]; then answer=$choice; return; fi
+    done
+    printf '%-14s %s\n' "" "one of: $*"
+  done
+}
+
+# more TEXT -- a line under a say line
+more() { printf '%-14s %s\n' "" "$1"; }
+
+# offer TEXT QUESTION [DEFAULT] -- asks on a "missing" line; true for yes
+offer() {
+  ask "$(printf '%-14s %s' missing "${1//$HOME/\~}") $2" "${3:-$dflt}" yes no
+  [[ $answer == yes ]]
+}
+
+# offer_route NAME HOST_OK HOST_TEXT BOX_TEXT -- $answer is host, box or no, for a missing NAME
+offer_route() {
+  local choices=() default=no
+  (( $2 )) && choices+=(host)
+  (( box_ok )) && choices+=(box)
+  if (( ! ${#choices[@]} )); then answer=no; return; fi
+  [[ $dflt == yes ]] && (( $2 )) && default=host
+  printf '%-14s %s\n' missing "$1, from:"
+  (( $2 )) && more "  host  $3"
+  (( box_ok )) && more "  box   $4"
+  ask "$(printf '%-14s %s' "" "$1?")" "$default" "${choices[@]}" no
+}
+
 emacs_have=none waypipe_have=none
 if [[ -z $IN_BOX_RUN ]]; then
-  (( want_emacs || want_packages )) && emacs_have=$(route_of emacs)
-  (( want_waypipe )) && waypipe_have=$(route_of waypipe)
+  (( want_emacs || want_packages || interactive )) && emacs_have=$(route_of emacs)
+  (( want_waypipe || interactive )) && waypipe_have=$(route_of waypipe)
+fi
+# Interactive, a route in place is kept, as by a bare option, where this run can take it up.
+if (( interactive )); then
+  case $emacs_have in
+    host) (( host_ok )) && want_emacs=1 ;;
+    box) (( box_ok )) && want_emacs=1 ;;
+  esac
+  case $waypipe_have in
+    host) want_waypipe=1 ;;
+    box) (( box_ok )) && want_waypipe=1 ;;
+  esac
 fi
 if (( want_emacs )) && [[ -z $emacs_route ]]; then
   if [[ $emacs_have == box ]]; then emacs_route=box want_arch=1; else emacs_route=host; fi
@@ -343,7 +470,7 @@ for rc in "$HOME/.bashrc" "$HOME/.profile"; do
     say "ok" "$rc: ~/.local/bin on PATH"
   else
     act "$rc: export PATH=~/.local/bin:\$PATH" "add"
-    (( check )) || printf '%s\n' 'export PATH=~/.local/bin:$PATH' | append "$rc"
+    (( check )) || rc_append "$rc" 'export PATH=~/.local/bin:$PATH'
   fi
 done
 
@@ -409,12 +536,16 @@ command rm -f "$content"
 # Only whether each font is there at all; updating needs the network, so it is left to
 # install-nerd-fonts.sh.
 
+# Interactive, each one missing is asked about.
+(( interactive )) && nerd_fonts=$DEFAULT_FONTS
 if [[ -n $nerd_fonts ]]; then
   FONTS=${XDG_DATA_HOME:-$HOME/.local/share}/fonts/NerdFonts
   fonts_missing=()
   for name in ${nerd_fonts//,/ }; do
     if [[ -f $FONTS/$name/.version ]]; then
       say "ok" "Nerd Fonts $name $(<"$FONTS/$name/.version")"
+    elif (( interactive )) && ! offer "Nerd Fonts $name." "Install it?"; then
+      continue
     else
       act "Nerd Fonts $name into ${FONTS%/*}" "install"
       fonts_missing+=("$name")
@@ -505,6 +636,15 @@ fi
 # Only whether pacman-home has it; updating needs the network and Arch Linux ARM's databases, so
 # it is left to install-waypipe.sh.
 
+if (( interactive && ! want_waypipe )) && [[ $waypipe_have == none ]]; then
+  offer_route waypipe 1 "Arch Linux ARM's package, relocated under ~/.local" \
+    "a copy of the $BOX box's, which pacman in the box keeps current"
+  case $answer in
+    host) want_waypipe=1 waypipe_route=host ;;
+    box) want_waypipe=1 waypipe_route=box want_arch=1 ;;
+  esac
+fi
+
 if (( want_waypipe )) && [[ $waypipe_route == host ]]; then
   ver=$("$SRC/bin/pacman-home" -Q waypipe 2>/dev/null | awk '{print $2}') || true
   if [[ -n $ver ]]; then
@@ -523,6 +663,10 @@ fi
 # `mise upgrade`); setup.sh only asks whether cargo resolves.
 
 MISE=$HOME/.local/bin/mise
+
+if (( interactive && ! want_mise )); then
+  if [[ -x $MISE ]] || offer "mise, with rust through it." "Install it?"; then want_mise=1; fi
+fi
 
 if (( want_mise )); then
   if [[ -x $MISE ]]; then
@@ -552,6 +696,38 @@ pkgbuild_info() {
     printf "%s %s-%s" "$pkgname" "$pkgver" "$pkgrel"
     for d in "${depends[@]}"; do printf " %s" "${d%%[<>=]*}"; done; echo' _ "$1"
 }
+
+# Interactive: emacs's route when there is none, then the packages pacman-home has, and those it
+# lacks if wanted. emacs=host builds against the host's libraries, so not from a box.
+if (( interactive )); then
+  if (( ! want_emacs )) && [[ $emacs_have == none ]]; then
+    offer_route emacs "$host_ok" "pkgbuilds/emacs built here, under ~/.local (about 3 minutes)" \
+      "the $BOX box's emacs-wayland, exported to ~/.local/bin"
+    case $answer in
+      host) want_emacs=1 emacs_route=host ;;
+      box) want_emacs=1 emacs_route=box want_arch=1 ;;
+    esac
+  fi
+  if (( host_ok )); then
+    pkgs=() pkgs_missing=()
+    [[ $emacs_route == host ]] && pkgs+=(emacs-wayland)
+    for dir in "$SRC"/pkgbuilds/*/; do
+      [[ -f $dir/PKGBUILD ]] || continue
+      read -r name _ < <(pkgbuild_info "${dir%/}") || continue
+      [[ $name == emacs-wayland ]] && continue
+      if "$PACMAN_HOME" -Q "$name" >/dev/null 2>&1; then pkgs+=("$name"); else pkgs_missing+=("$name"); fi
+    done
+    names=${pkgs_missing[*]} question="Build it?"
+    (( ${#pkgs_missing[@]} > 1 )) && question="Build them?"
+    if (( ${#pkgs_missing[@]} )) \
+      && offer "${names// / and } from pkgbuilds/, built here under ~/.local." "$question"; then
+      pkgs+=("${pkgs_missing[@]}")
+    fi
+    if (( ${#pkgs[@]} )); then
+      want_packages=1 packages=$(IFS=,; echo "${pkgs[*]}")
+    fi
+  fi
+fi
 
 if (( want_packages )); then
   [[ -x $PACMAN_HOME ]] || die "$PACMAN_HOME is missing"
@@ -630,6 +806,14 @@ brew_ensure() {
   HOMEBREW_NO_ENV_HINTS=1 "$BREW" install "$1"
 }
 
+if (( interactive && host_ok && ! want_brew )); then
+  if [[ -x $BREW ]] \
+    || offer "Homebrew, with wl-clipboard; uses sudo once, to create /home/linuxbrew." "Install it?"
+  then
+    want_brew=1
+  fi
+fi
+
 if (( want_brew )); then
   if [[ -x $BREW ]]; then
     say "ok" "Homebrew $("$BREW" --version 2>/dev/null | sed -n '1s/^Homebrew //p')"
@@ -646,6 +830,9 @@ if (( want_brew )); then
   brew_ensure wl-clipboard
 fi
 
+if (( interactive && want_brew && ! want_zsh )); then
+  if [[ -x $BREW_PREFIX/bin/zsh ]] || offer "zsh from Homebrew." "Install it?"; then want_zsh=1; fi
+fi
 (( want_zsh )) && brew_ensure zsh
 
 # --- The arch box: --arch, --emacs=box, --waypipe=box ---------------------------------------------
@@ -663,6 +850,17 @@ confirm_box() {
   read -r -p "Continue? [y/N] " answer </dev/tty || return 1
   [[ $answer == [yY]* ]]
 }
+
+# Interactive, an arch box in place is reported, and one that no route needs is offered on its own.
+# Its answer stands in for confirm_box's question.
+if (( interactive && box_ok && ! want_arch )); then
+  if [[ $box == "$BOX" ]] || podman container exists "$BOX" 2>/dev/null; then
+    want_arch=1
+  elif offer "$BOX distrobox, Arch Linux ARM, $IMAGE_SIZE; only the box routes need it." \
+    "Create it?" no; then
+    want_arch=1 yes=1
+  fi
+fi
 
 if (( want_arch )); then
   have_box=0
@@ -709,6 +907,30 @@ fi
 TS=/home/.tailscale/bin
 KEEP=/etc/atomic-update.conf.d/tailscale-firewall.conf
 
+ts_declined=0
+if (( interactive && host_ok )) && [[ -z $tailscale ]]; then
+  if [[ -x $TS/tailscale && -f $KEEP ]]; then
+    tailscale=trust
+  elif [[ -x $TS/tailscale ]]; then
+    tailscale=plain
+    if offer "tailscale0 in firewalld's trusted zone, so the tailnet reaches the Frame's ports." \
+      "Trust it?" no; then
+      tailscale=trust
+    fi
+  else
+    printf '%-14s %s\n' missing "Tailscale, a system service, installed with sudo; trust also puts"
+    more "tailscale0 in firewalld's trusted zone, so the tailnet reaches the Frame's ports"
+    default=no
+    [[ $dflt == yes ]] && default=trust
+    ask "$(printf '%-14s %s' "" "Tailscale?")" "$default" trust yes no
+    case $answer in
+      trust) tailscale=trust ;;
+      yes) tailscale=plain ;;
+      no) ts_declined=1 ;;
+    esac
+  fi
+fi
+
 if [[ -n $box ]]; then
   say "skip" "tailscaled: the $box box can't see it; check from the host"
 else
@@ -725,6 +947,8 @@ else
 
   if (( ${#ts_missing[@]} == 0 )); then
     say "ok" "tailscaled"
+  elif (( ts_declined )); then
+    say "skip" "tailscaled: not installed"
   elif [[ -z $tailscale ]]; then
     say "missing" "tailscaled: ${ts_missing[*]} (re-run with --tailscale, or see README.md#tailscale)"
   elif ts_needs binaries || ts_needs unit; then
@@ -826,8 +1050,9 @@ init_block() {
 
 # The containers share these rc files, so each file works on the host and in a distrobox alike.
 # SteamOS has no zsh, so ~/.zshrc is optional; --zsh creates it so that zsh doesn't start with its
-# new-user menu.
-if (( want_zsh )) && [[ ! -e $HOME/.zshrc ]]; then
+# new-user menu. Interactive, the first block's write creates it instead, so that it is asked about
+# with its content.
+if (( want_zsh && ! interactive )) && [[ ! -e $HOME/.zshrc ]]; then
   act "$HOME/.zshrc" "create"
   (( check )) || : > "$HOME/.zshrc"
 fi
