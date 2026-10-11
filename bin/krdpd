@@ -40,6 +40,10 @@ log=$HOME/.local/state/krdpd.log
 info=$HOME/.local/state/krdpd.info  # what start served, for status
 uid=$(id -u)
 run=/run/user/$uid
+# flatpak keeps its instances under XDG_RUNTIME_DIR, and Frametop's desktop moves that to
+# $run/frametop, so from there flatpak ps would miss the server and flatpak kill couldn't reach
+# it. The sandbox's /run/user/UID is mapped from it too.
+export XDG_RUNTIME_DIR=$run
 
 usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
 die() { echo "krdpd: $*" >&2; exit 1; }
@@ -109,11 +113,10 @@ start() {
   fi
   ensure_creds
   mkdir -p "$(dirname "$log")"
-  # flatpak maps the sandbox's /run/user/UID from XDG_RUNTIME_DIR and resolves its xdg grants
-  # against the XDG dirs, so give it the user's real ones, whatever this shell inherited from a
-  # nested session. WAYLAND_DISPLAY, as an absolute path, is the socket flatpak connects the
-  # sandbox to (with a security context, which is what KWin trusts).
-  export XDG_RUNTIME_DIR=$run
+  # flatpak resolves the sandbox's xdg grants against the XDG dirs, so give it the user's real
+  # ones, whatever this shell inherited from a nested session. WAYLAND_DISPLAY, as an absolute
+  # path, is the socket flatpak connects the sandbox to (with a security context, which is what
+  # KWin trusts).
   unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME XDG_CACHE_HOME
   WAYLAND_DISPLAY=$dir/wayland-0 setsid flatpak run --env=LANG=C.UTF-8 "$APP" \
     --plasma --address "$address" --port "$port" \
