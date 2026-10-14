@@ -10,6 +10,12 @@
 # back on. The headset is never touched. SteamVR has to be running, as it is in Game Mode. It runs
 # on the Frame itself, so from a PC use it over ssh.
 #
+# The Frame's controllers run on one AA each, and their firmware reports a percentage made for
+# alkaline cells, which reads a full NiMH cell as about 78%. So beside it the list gives the cell's
+# voltage worked back from that percentage, and what that voltage means for a NiMH cell. Both
+# are estimates: the firmware's mapping was fitted to cells measured out of the controller with a
+# multimeter, and SteamVR never reports a voltage.
+#
 # SteamVR has no public call for this. The dashboard's "Turn off controller" goes through the
 # private IVRControlPanel_006 interface, whose PowerOffTrackedDevice is the 13th method (slot 12).
 # That layout is read off the Android build SteamVR ships beside the Linux one, which keeps its
@@ -33,7 +39,18 @@ PROP_SERIAL = 1002             # Prop_SerialNumber_String
 PROP_CHARGING = 1011           # Prop_DeviceIsCharging_Bool
 PROP_BATTERY = 1012            # Prop_DeviceBatteryPercentage_Float
 PROP_HAS_BATTERY = 1026        # Prop_DeviceProvidesBatteryStatus_Bool
-APP_BACKGROUND = 3             # VRApplication_Background: fails unless SteamVR already runs
+FRAME_MODEL = "roy_"           # Roy_Left, Roy_Right: the Frame's AA controllers
+
+# The firmware's percentage is close to linear in the cell's resting voltage, 0% at 1.13 V and 100%
+# at 1.48 V: a line fitted to twenty readings between 9% and 79% against a multimeter (10 mV rms,
+# 20 mV at worst, and one percentage was seen 13 mV apart on two days), so above 79% it is
+# extrapolated.
+AA_EMPTY_V, AA_FULL_V = 1.13, 1.48
+# A NiMH cell's resting voltage against its charge, a typical curve for low self-discharge cells
+# such as Eneloop: high just off the charger, then flat around 1.25 V for most of its life.
+NIMH_CURVE = [(1.15, 0), (1.20, 10), (1.22, 20), (1.235, 30), (1.245, 40), (1.255, 50),
+              (1.265, 60), (1.28, 70), (1.30, 80), (1.33, 90), (1.38, 100)]
+APP_BACKGROUND = 3            # VRApplication_Background: fails unless SteamVR already runs
 ERR_NO_SERVER = 121            # VRInitError_Init_NoServerForBackgroundApp
 
 
@@ -147,6 +164,17 @@ def describe(vr, index):
     return hand, model, serial
 
 
+def aa_estimate(level):
+    # The AA's resting voltage from the firmware's 0-1 level, and the NiMH charge it would mean.
+    volts = AA_EMPTY_V + level * (AA_FULL_V - AA_EMPTY_V)
+    if volts <= NIMH_CURVE[0][0]:
+        return volts, 0
+    for (v0, p0), (v1, p1) in zip(NIMH_CURVE, NIMH_CURVE[1:]):
+        if volts <= v1:
+            return volts, round(p0 + (volts - v0) / (v1 - v0) * (p1 - p0))
+    return volts, 100
+
+
 def list_controllers(vr):
     found = vr.controllers()
     if not found:
@@ -158,6 +186,9 @@ def list_controllers(vr):
             state = "on"
             if vr.boolean(i, PROP_HAS_BATTERY) and (level := vr.battery(i)) is not None:
                 state += f", battery {round(level * 100)}%"
+                if model.lower().startswith(FRAME_MODEL):
+                    volts, nimh = aa_estimate(level)
+                    state += f" (~{volts:.2f} V, NiMH ~{nimh}%)"
                 if vr.boolean(i, PROP_CHARGING):
                     state += " charging"
         else:
