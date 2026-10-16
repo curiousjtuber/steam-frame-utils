@@ -455,12 +455,12 @@ update. The package needs only libc, libgcc, lz4 and zstd, which SteamOS has, an
 its binary and man page, so it runs on the host as it is (see [Packages for the
 host](#packages-for-the-host)). `install-waypipe.sh` runs `pacman-home relocate waypipe`: pacman syncs
 Arch Linux ARM's package databases from one mirror, downloads the package when the installed
-version differs, checks it against the database's checksum, and the package's `/usr` tree is
-moved under `~/.local` and installed into `pacman-home`'s database, so `pacman-home -Q waypipe`
-knows it and `pacman-home -R waypipe` removes it. A library the host lacks, a newer glibc among
-them, is reported before the install. A waypipe from before `pacman-home`, a bare binary in
-`~/.local/bin`, is backed up to `waypipe.bak-<timestamp>` first. The package signature isn't
-checked. `--waypipe=box` takes the other source: a copy of the `arch` box's `/usr/bin/waypipe`, the
+version differs, takes it only with a valid signature from Arch Linux ARM's keys (see below), and
+the package's `/usr` tree is moved under `~/.local` and installed into `pacman-home`'s database,
+so `pacman-home -Q waypipe` knows it and `pacman-home -R waypipe` removes it. A library the host
+lacks, a newer glibc among them, is reported before the install. A waypipe from before
+`pacman-home`, a bare binary in `~/.local/bin`, is backed up to `waypipe.bak-<timestamp>` first.
+`--waypipe=box` takes the other source: a copy of the `arch` box's `/usr/bin/waypipe`, the
 same package, which pacman in the box keeps current and a re-run of `setup.sh --waypipe` refreshes.
 `pacman-home -Qo ~/.local/bin/waypipe` says which is in place, and switching asks (see [emacs and
 waypipe: host or box](#emacs-and-waypipe-host-or-box)).
@@ -613,7 +613,8 @@ were, for features the host lacks and a layout that keeps out of the host's way.
 
 A program that needs no file outside its own tree, such as waypipe, needn't be built at all.
 `pacman-home relocate NAME` fetches Arch Linux ARM's binary package through pacman's own
-repository machinery, against one mirror (`ALARM_MIRROR` overrides it) with signatures off,
+repository machinery, against one mirror (`ALARM_MIRROR` overrides it), takes it only with a
+valid signature from Arch Linux ARM's keys,
 moves its `/usr` tree under `~/.local`, points its absolute symlinks there, drops its install
 scriptlet, and installs the result; `relocate FILE` does the same to a package you have. It
 refuses a package with files under `/etc` or `/var`, or under the parts of `/usr` that only work
@@ -625,6 +626,15 @@ run time; that one needs a build.
 ### Which way in
 
 For a new program, in this order:
+
+The keys come from Arch Linux ARM's `archlinuxarm-keyring` package, which `pacman-home keyring`
+(run by `relocate NAME` the first time, and by `setup.sh --waypipe=host` for a waypipe from
+before) fetches once with signatures off, since there is nothing to check it with yet, and holds
+to the key fingerprint recorded in `pacman-home` instead, checked against archlinuxarm.org: a
+keyring that trusts other keys is refused. `pacman-key` then populates `pacman-home`'s own
+keyring under `~/.local/etc/pacman.d/gnupg`, under fakeroot like pacman. `pacman-home keyring
+--check` says whether the keys are there. Arch Linux ARM doesn't sign its databases, so those
+are taken on the mirror's word, as every pacman does.
 
 1. **`pacman-home relocate NAME`, and run the program.** It is the whole job when the program
    needs nothing outside its own tree. Relocate refuses a package with files outside `/usr` or in

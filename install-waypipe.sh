@@ -11,8 +11,10 @@
 # README.md#the-waypipe-function.
 #
 # pacman-home syncs Arch Linux ARM's package databases, about 10 MB, from one mirror (ALARM_MIRROR
-# overrides it), downloads the package when the installed version differs, checks it against the
-# database's checksum, and warns when the host lacks a library it needs, a newer glibc among them.
+# overrides it), downloads the package when the installed version differs, takes it only with a
+# valid signature from Arch Linux ARM's keys (fetched into its own keyring the first time, and
+# held to the key fingerprints recorded in pacman-home), and warns when the host lacks a library
+# it needs, a newer glibc among them.
 # The package's PGP signature isn't checked. A waypipe installed before pacman-home, a bare binary
 # in ~/.local/bin, is backed up to waypipe.bak-<timestamp> first, since pacman won't write over a
 # file it doesn't own.

@@ -10,11 +10,11 @@ and the nearest source of aarch64 binaries for SteamOS.
 | What | Root of trust | What's checked | Where it runs |
 |---|---|---|---|
 | `pkgbuilds/` (`--packages`, `--emacs=host`) | gnu.org and gitlab.archlinux.org release tarballs, your review of the PKGBUILD | BLAKE2 sums in the PKGBUILD, by makepkg | built on the host, under `~/.local`, no root |
+| waypipe for the host (`--waypipe=host`) | ALARM's Build System key, pinned by fingerprint in `pacman-home` | the package's PGP signature, by pacman; the keyring package itself once, against the pinned fingerprint | a binary under `~/.local/bin` |
 | Tailscale (`install-tailscale.sh`) | pkgs.tailscale.com, Tailscale | the tarball against the `.sha256` beside it | root: a system daemon |
 | Nerd Fonts (`install-nerd-fonts.sh`) | GitHub's TLS, the nerd-fonts project | the archive against the release's `SHA-256.txt` | fonts under `~/.local/share/fonts`, data not code |
 | arch distrobox (`--arch`, `--emacs=box`, `--waypipe=box`) | Docker Hub's TLS, one maintainer's image | nothing at the pull; ALARM's signatures for every package installed inside | a container with the usual distrobox host access |
 | Homebrew packages (`--brew`, `--zsh`) | Homebrew's git repo and bottles | each bottle against the sha256 in its formula | `/home/linuxbrew`, no root |
-| waypipe for the host (`--waypipe=host`) | one ALARM mirror over HTTPS | the package against the mirror's own database checksum; signatures off | a binary under `~/.local/bin` |
 | distrobox, mise, Homebrew's installer | GitHub's TLS, mise.run, each project's account | nothing: `curl \| sh`, unpinned | `~/.local`, `/home/linuxbrew` |
 
 Nothing runs as root except Tailscale and the one-time creation of
@@ -59,13 +59,17 @@ repository, unpinned, run once.
 
 ## waypipe for the host
 
-`install-waypipe.sh` goes through `pacman-home relocate`, which writes
-`SigLevel = Never` for ALARM's repositories and takes the package on the
-database's checksum from one mirror over HTTPS. ALARM signs its packages;
-the keyring is simply not in pacman-home's GPGDir, so a compromised or stale
-mirror could hand the host an unsigned binary that pacman would otherwise
-refuse. This is the one gap that is cheap to close: put `archlinuxarm-keyring`
-into pacman-home's GPGDir and let SigLevel return to the default.
+`install-waypipe.sh` goes through `pacman-home relocate`, which takes ALARM's
+package only with a valid signature (`SigLevel = Required`). The keys come
+from ALARM's `archlinuxarm-keyring` package, fetched once with signatures
+off, since there is nothing to check it with yet; what stands in for that is
+the fingerprint of ALARM's Build System key, recorded in `pacman-home` and
+checked against archlinuxarm.org on 2026-10-15, which a keyring that trusts
+other keys fails. From then on a mirror can only serve what that key signed:
+on the Frame, a package with one byte changed was refused on its signature.
+ALARM's databases aren't signed, so which versions exist is still the
+mirror's word, as with every pacman. Until 2026-10-15 this route ran with
+`SigLevel = Never` and the database's checksum alone.
 
 ## distrobox and mise
 
@@ -79,8 +83,6 @@ same pattern BSManager is marked weakest for in `apps/`.
 
 ## What would raise the floor
 
-- ALARM's keyring in pacman-home, so the waypipe host route verifies
-  signatures.
 - A pinned release and recorded sha256 for distrobox's installer, as
   Frametop does, and the same for mise.
 - A digest for the arch image.

@@ -646,6 +646,14 @@ if (( interactive && ! want_waypipe )) && [[ $waypipe_have == none ]]; then
 fi
 
 if (( want_waypipe )) && [[ $waypipe_route == host ]]; then
+  # The keys that sign Arch Linux ARM's packages, so pacman-home takes waypipe only signed. A
+  # fresh install gets them through install-waypipe.sh; this is for a waypipe from before.
+  if "$SRC/bin/pacman-home" keyring --check >/dev/null 2>&1; then
+    say "ok" "Arch Linux ARM's signing keys in pacman-home's keyring"
+  else
+    act "Arch Linux ARM's signing keys into pacman-home's keyring (pacman-home keyring)" "install"
+    (( check )) || "$SRC/bin/pacman-home" keyring
+  fi
   ver=$("$SRC/bin/pacman-home" -Q waypipe 2>/dev/null | awk '{print $2}') || true
   if [[ -n $ver ]]; then
     say "ok" "waypipe $ver from Arch Linux ARM, in pacman-home's database"

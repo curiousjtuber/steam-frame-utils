@@ -20,6 +20,11 @@
 #                                               Linux ARM (ALARM_MIRROR overrides the mirror),
 #                                               FILE is a package you have. Refused when the host
 #                                               lacks a library it needs, unless told to allow it
+#         pacman-home keyring [--check]          Arch Linux ARM's signing keys in this database's
+#                                               own keyring, so its packages are taken only with
+#                                               a valid signature; relocate NAME does this itself
+#                                               the first time. --check only says whether they
+#                                               are there
 #         any other pacman operation and options pass through
 #
 # pacman refuses to install or remove unless it runs as root, whatever paths it is given, so
@@ -39,6 +44,15 @@
 # package's dependencies are checked against the host's database and the satisfied ones are
 # passed as --assume-installed. A dependency the host lacks is still an error, and a dependency
 # on another ~/.local package is resolved against this database as usual.
+#
+# Arch Linux ARM signs its packages, and relocate NAME only takes one with a valid signature
+# (SigLevel Required; its databases aren't signed). The keys come from its archlinuxarm-keyring
+# package, fetched once from the mirror with signatures off, since there is no key to check it
+# with yet; what stands in for that is the list of trusted key fingerprints below, taken from
+# the keyring package and checked against archlinuxarm.org on 2026-10-15: a keyring package
+# whose trusted list differs is refused. pacman-key populates the
+# keyring under ~/.local/etc/pacman.d/gnupg, under fakeroot like pacman, since it insists on
+# root for that.
 #
 # relocate suits a program that needs no file outside its own tree: a binary, its libraries,
 # man pages. It refuses a package with files under /etc or /var, or under the parts of /usr that
@@ -66,10 +80,22 @@ CONF=$LOCAL/etc/pacman.conf
 ALARM_CONF=$LOCAL/etc/pacman-alarm.conf
 ALARM_MIRROR=${ALARM_MIRROR:-https://fl.us.mirror.archlinuxarm.org}
 CACHE=$LOCAL/var/cache/pacman/pkg
+GPGDIR=$LOCAL/etc/pacman.d/gnupg
+KEYRINGS=$LOCAL/share/pacman/keyrings  # what pacman-key --populate reads: the keyring package's files
 HOST_PACMAN=/usr/bin/pacman
 LOCAL_PACMAN=$LOCAL/lib/pacman/bin/pacman
 PACMAN=$HOST_PACMAN
 [[ -x $LOCAL_PACMAN ]] && PACMAN=$LOCAL_PACMAN
+PACMAN_KEY=/usr/bin/pacman-key
+[[ $PACMAN == "$LOCAL_PACMAN" && -x ${PACMAN%/*}/pacman-key ]] && PACMAN_KEY=${PACMAN%/*}/pacman-key
+# Arch Linux ARM's trusted keys, as archlinuxarm-trusted in its keyring package lists them: the
+# Build System key that signs every package (archlinuxarm-keyring 20240419-2). archlinuxarm.org
+# lists it with the three developers' keys (Kevin Mihelich, Jason Plum, Mike Brown), which the
+# keyring's git source already trusts instead; a keyring package that lists other keys is
+# refused, so check archlinuxarm.org/about/package-signing before updating this list.
+ALARM_TRUSTED=(
+  68B3537F39A313B3E574D06777193F152BDBE6A6
+)
 
 mkdir -p "$LOCAL/var/lib/pacman" "$CACHE" "$LOCAL/var/log" \
   "$LOCAL/etc/pacman.d/hooks" "$LOCAL/etc/pacman.d/gnupg"
@@ -91,8 +117,8 @@ CONF
 # pacman 7 runs downloads in a Landlock sandbox, and the Frame kernel has no Landlock; the host's
 # pacman 6 would not know the directive.
 [[ $PACMAN == "$LOCAL_PACMAN" ]] && echo "DisableSandboxFilesystem" >> "$CONF"
-# Arch Linux ARM's keyring isn't in that GPGDir, so its packages are taken on the database's
-# checksum alone, which pacman still verifies.
+# Arch Linux ARM's packages need a valid signature from the keys ensure_keyring puts in that
+# GPGDir; its databases carry none.
 cat > "$ALARM_CONF" <<CONF
 # Written by steam-frame-utils' pacman-home on each run; edits here are lost.
 [options]
@@ -100,15 +126,15 @@ Include = $CONF
 Architecture = aarch64
 
 [core]
-SigLevel = Never
+SigLevel = Required DatabaseOptional
 Server = $ALARM_MIRROR/\$arch/\$repo
 
 [extra]
-SigLevel = Never
+SigLevel = Required DatabaseOptional
 Server = $ALARM_MIRROR/\$arch/\$repo
 
 [alarm]
-SigLevel = Never
+SigLevel = Required DatabaseOptional
 Server = $ALARM_MIRROR/\$arch/\$repo
 CONF
 
@@ -141,11 +167,82 @@ check_cmd() {
   return $bad
 }
 
+# --- keyring: Arch Linux ARM's signing keys -----------------------------------------------------
+
+# have_keyring -- are all of ALARM_TRUSTED in the GPGDir?
+have_keyring() {
+  local fps fp
+  fps=$(gpg --homedir "$GPGDIR" --batch --with-colons --list-keys 2>/dev/null) || return 1
+  for fp in "${ALARM_TRUSTED[@]}"; do
+    grep -q "^fpr:::::::::$fp:" <<<"$fps" || return 1
+  done
+}
+
+# ensure_keyring [force] -- the keyring populated from the archlinuxarm-keyring package, fetched
+# with signatures off (nothing to check it with yet) and held to ALARM_TRUSTED instead.
+ensure_keyring() {
+  local force=${1:-} fr=(fakeroot) boot pkg listed fp out
+  [[ -n ${FAKEROOTKEY:-} ]] && fr=()
+  if [[ -z $force ]] && have_keyring; then return 0; fi
+  for cmd in gpg "$PACMAN_KEY"; do
+    command -v "$cmd" >/dev/null || die "missing required command: $cmd"
+  done
+  boot=${ALARM_CONF%.conf}-bootstrap.conf
+  sed 's/^SigLevel = .*/SigLevel = Never/' "$ALARM_CONF" >"$boot"
+  say "sync" "Arch Linux ARM's databases from $ALARM_MIRROR"
+  "${fr[@]}" "$PACMAN" --config "$boot" -Sy >/dev/null || die "can't sync the databases"
+  pkg=$("$PACMAN" --config "$boot" -Spdd archlinuxarm-keyring 2>/dev/null) \
+    || die "no archlinuxarm-keyring in Arch Linux ARM's repositories"
+  say "download" "${pkg##*/} from $ALARM_MIRROR, with signatures off: the keys to check with are inside"
+  "${fr[@]}" "$PACMAN" --config "$boot" -Swdd --noconfirm archlinuxarm-keyring >/dev/null \
+    || die "can't download archlinuxarm-keyring"
+  pkg=$CACHE/${pkg##*/}
+  command rm -rf "$KEYRINGS"
+  mkdir -p "$KEYRINGS"
+  bsdtar -xf "$pkg" -C "$KEYRINGS" --strip-components 4 usr/share/pacman/keyrings \
+    || die "can't extract $pkg"
+  [[ -s $KEYRINGS/archlinuxarm.gpg && -s $KEYRINGS/archlinuxarm-trusted ]] \
+    || die "${pkg##*/} holds no archlinuxarm.gpg and archlinuxarm-trusted"
+  listed=$(cut -d: -f1 "$KEYRINGS/archlinuxarm-trusted" | grep -v '^#' | sort)
+  [[ $listed == "$(printf '%s\n' "${ALARM_TRUSTED[@]}" | sort)" ]] \
+    || die "${pkg##*/} trusts other keys than this script records (ALARM_TRUSTED):" \
+      "$(tr '\n' ' ' <<<"$listed")-- check archlinuxarm.org before updating the list"
+  # --init makes the local master key that --populate signs the trusted keys with; gpg's own
+  # listing may have made an empty pubring already, so the secret key is what says it ran.
+  if ! gpg --homedir "$GPGDIR" --batch --with-colons --list-secret-keys 2>/dev/null | grep -q '^sec:'; then
+    say "init" "pacman-key's master key in $GPGDIR"
+    out=$("${fr[@]}" "$PACMAN_KEY" --config "$ALARM_CONF" --init 2>&1) \
+      || die "pacman-key --init failed in $GPGDIR:"$'\n'"$out"
+  fi
+  say "populate" "$GPGDIR from ${pkg##*/}"
+  out=$("${fr[@]}" "$PACMAN_KEY" --config "$ALARM_CONF" --populate-from "$KEYRINGS" --populate archlinuxarm 2>&1) \
+    || die "pacman-key --populate archlinuxarm failed:"$'\n'"$out"
+  have_keyring || die "the keyring lacks a key of ALARM_TRUSTED after populating"
+  for fp in "${ALARM_TRUSTED[@]}"; do
+    say "trusted" "$fp"
+  done
+}
+
+keyring_cmd() {
+  case ${1:-} in
+    --check)
+      if have_keyring; then
+        say "ok" "Arch Linux ARM's keys are in $GPGDIR"
+      else
+        say "missing" "Arch Linux ARM's keys in $GPGDIR (pacman-home keyring)"
+        exit 1
+      fi ;;
+    '') ensure_keyring force ;;
+    *) die "keyring takes --check or nothing" ;;
+  esac
+}
+
 # --- relocate: a stock binary package moved under ~/.local --------------------------------------
 
 # sync_alarm -- Arch Linux ARM's databases, refreshed. No fakeroot inside fakeroot.
 sync_alarm() {
   local fr=(fakeroot); [[ -n ${FAKEROOTKEY:-} ]] && fr=()
+  ensure_keyring
   say "sync" "Arch Linux ARM's databases from $ALARM_MIRROR"
   "${fr[@]}" "$PACMAN" --config "$ALARM_CONF" -Sy >/dev/null || die "can't sync the databases"
 }
@@ -291,6 +388,7 @@ case $1 in
   check) shift; check_cmd "$@"; exit ;;
   outdated) outdated_cmd; exit ;;
   relocate) shift; relocate_cmd "$@" ;;
+  keyring) shift; keyring_cmd "$@"; exit ;;
 esac
 
 # --- pacman proper ---------------------------------------------------------------------------------
