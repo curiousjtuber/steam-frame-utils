@@ -277,6 +277,8 @@ steps.
 
 `apps/` holds one installer per app. `setup.sh` doesn't run them; each is run by hand, and a
 re-run updates. The header comment of each has the details and the uninstall steps.
+[apps/TRUST.md](apps/TRUST.md) says what each one verifies, who is trusted at the root, and
+what the app gets on the headset.
 
 | Script | App | Where it goes |
 |---|---|---|
