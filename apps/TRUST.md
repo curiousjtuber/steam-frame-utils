@@ -3,7 +3,9 @@
 What each installer in `apps/` verifies, who is trusted at the root, and what
 the app gets on the headset. Checked on 2026-10-15 against the installers in
 this folder and the upstream sources they fetch from. The ranking is by what
-would catch a tampered download, strongest first.
+would catch a tampered download, strongest first. What `setup.sh` and the
+top-level installers fetch is ranked the same way in
+[docs/TRUST.md](../docs/TRUST.md).
 
 | App | Root of trust | What's checked | Sandbox |
 |---|---|---|---|
