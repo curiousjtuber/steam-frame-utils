@@ -15,17 +15,17 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `bin/cursor-size [SIZE] [--theme NAME] [--desktop frametop\|stock]` | shows or sets the mouse cursor's size in Desktop Mode or the Frametop desktop, and applies it to the running desktop (see [Cursor size](#cursor-size)) |
-| `autostart/` | runs `cursor-size --apply` as each desktop starts, so the size set survives a restart (same section) |
+| `autostart/` | runs `cursor-size --apply` as each desktop starts, so the size set survives a restart; `setup.sh` installs it wherever it installs the software cursor, with which the desktops take gamescope's 256 px, and removes it otherwise (same section) |
 | `bin/wifi-known [--all]` | the Wi-Fi networks NetworkManager has saved that are in range, strongest first; Desktop Mode has no Plasma network applet, so this and `nmtui` stand in for it |
 | `bin/frame-versions` | the versions of SteamOS, SteamVR and the Steam client, as Valve's patch notes number them, with each one's build and update channel; SteamVR comes with the OS image and the client updates itself, so the client is read from `~/.local/share/Steam`, not from its package |
 | `bin/vr-controllers [off [left\|right]]` | lists the VR controllers SteamVR knows, with battery (for the Frame's AA controllers also an estimated cell voltage and NiMH charge), or turns them off from a shell as the dashboard's power menu does; this goes through a private SteamVR interface, so the script says how its slot was found and refuses if SteamVR renames the interface |
 | `bin/steam-controller [off [NAME]]` | lists the Steam Controllers paired over Bluetooth that are on, with battery, or turns them off, with Valve's own HID power-off command sent to the hidraw node since the kernel's hid-steam doesn't take this controller yet |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
-| `environment.d/` | shows the mouse cursor in Desktop Mode (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
+| `environment.d/` | shows the mouse cursor in Desktop Mode on SteamOS below 0.5.6; `setup.sh` installs it there and removes it from 0.5.6 on, where the stock desktop draws it itself and Frametop's session sets the variable for its own (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 | `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
 | `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
 | `bin/makepkg-home` | builds one of `pkgbuilds/`, installs it with `pacman-home`, and offers to delete the build's leftovers (same section) |
-| `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md); [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found; [packages under `~/.local`](docs/home-packages.md), what each one took to get there; [paru](docs/paru.md), tried on the home database and dropped; [the screen reader](docs/orca-screen-reader.md), the command that silences Orca's "dummy output module" message and why Steam restarts it at every boot; and [trust](docs/TRUST.md), what `setup.sh` fetches and who is trusted at the root (the apps have [apps/TRUST.md](apps/TRUST.md)) |
+| `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md); [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found; [the desktop cursor](docs/desktop-cursor.md), what SteamOS 0.5.6 changed for the two cursor fixes and how to re-check on the next one; [packages under `~/.local`](docs/home-packages.md), what each one took to get there; [paru](docs/paru.md), tried on the home database and dropped; [the screen reader](docs/orca-screen-reader.md), the command that silences Orca's "dummy output module" message and why Steam restarts it at every boot; and [trust](docs/TRUST.md), what `setup.sh` fetches and who is trusted at the root (the apps have [apps/TRUST.md](apps/TRUST.md)) |
 
 ## Setup
 
@@ -538,6 +538,14 @@ systemd reads `~/.config/environment.d` at login. `setup.sh` copies the file the
 afterwards. `env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
 `~/.config/environment.d/90-kwin-software-cursor.conf` and reboot.
 
+SteamOS 0.5.6 draws the stock desktop's cursor itself. `setup.sh` reads `VERSION_ID` from
+`/etc/os-release` and installs the file below that version (`CURSOR_FIXED_IN` in `setup.sh`);
+from 0.5.6 on it removes a copy it installed earlier, and says to reboot. A file there that isn't
+its own is left alone. The Frametop desktop still needs the variable on 0.5.6, and since
+`environment.d` would give it to both desktops, Frametop's session script sets it for its own
+KWin instead. [docs/desktop-cursor.md](docs/desktop-cursor.md) has what was found on 0.5.6 and
+how to re-check on the next SteamOS.
+
 ### Cursor size
 
 Both desktops start inside Game Mode's gamescope, and inherit its `XCURSOR_SIZE=256` and
@@ -562,7 +570,10 @@ toolkits, size it from the `XCURSOR_SIZE` the desktop started with.
 At each start KWin takes gamescope's variables again, so `setup.sh` installs
 `autostart/steam-frame-utils-cursor.desktop` in each desktop's autostart dir; it runs
 `cursor-size --apply`, which gives KWin the saved setting without changing it. The cursor is 256 px
-for the second or two until Plasma reaches autostart.
+for the second or two until Plasma reaches autostart. SteamOS 0.5.6 keeps the size itself, but
+only without the software cursor; with it the desktops take gamescope's 256 px again, so
+`setup.sh` installs the entry wherever it installs the `environment.d` file, and removes it where
+it removes that.
 
 The obvious place, a script in `plasma-workspace/env/` exporting the variables before KWin starts,
 doesn't work on the Frame, and that's worth knowing for anything else one might put there. Plasma
