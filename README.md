@@ -10,7 +10,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `install-tailscale.sh` | Tailscale as a system service that survives updates (see [Tailscale](#tailscale)) |
 | `install-nerd-fonts.sh` | Nerd Fonts in the home directory, no root needed (see [Nerd Fonts](#nerd-fonts)) |
 | `install-waypipe.sh` | waypipe for the host: Arch Linux ARM's package, relocated under `~/.local` by `pacman-home`, no root needed (see [The waypipe function](#the-waypipe-function)) |
-| `apps/` | installers for apps: Stream Frame, Moonlight, KRDC, Deskflow, BSManager, Full Keyboard and KRdp's server (see [Apps](#apps)) |
+| `apps/` | installers for apps: Frametop, Stream Frame, Moonlight, KRDC, Deskflow, BSManager, Full Keyboard and KRdp's server (see [Apps](#apps)) |
 | `shell-init/` | bash and zsh init for `bin/` on `PATH`, Homebrew, mise, the `tailscale` alias, `waypipe`, and terminals in the Frametop desktop (see [Shell init](#shell-init)) |
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
@@ -286,6 +286,7 @@ re-run updates. The header comment of each has the details and the uninstall ste
 | `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, system-wide, from Flathub; uses sudo |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 | `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
+| `install-frametop.sh [--version X.Y.Z] [--yes] [--no-eye-tracker] [--no-bluetooth \| --bluetooth] [--any-steamos] [--unpack-only] \| --uninstall` | [Frametop](https://github.com/Frametop/frametop), the multi-screen Plasma desktop and 3D mouse that run on the Frame itself | `~/.local/share/frametop/releases/<version>`, with a podman image and container from the release's `Frametop.zip`, and services in the home directory; two optional parts use sudo |
 | `install-krdp.sh [--bundle [FILE] \| --uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd`, or KRdp Server in the menu |
 
 - **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
@@ -319,6 +320,24 @@ re-run updates. The header comment of each has the details and the uninstall ste
   `SHA256SUMS` and runs the `install.sh` inside it, which keeps the previous release for rollback
   and refuses one already installed, so a re-run with nothing newer just says so. Close the
   keyboard before updating. `--uninstall` keeps the settings in `~/.config/framekeyboard`.
+- **Frametop** comes as one release file, `Frametop.zip`, that its CI builds from the
+  tagged commit on an arm64 runner: a podman image with everything compiled, and its
+  installer. The script records the zip's sha256 for the version it names, checks the
+  download against it and against the release's `SHA256SUMS`, and runs the zip's
+  `install-release.sh`, which checks the image file against the sha256 in the zip's
+  `frametop-release.json`, loads it, copies the release's files out and runs their
+  `install.sh`: nothing compiles, and nothing else downloads but the table of tested
+  SteamOS builds, which the zip also carries for offline. A release replaced on GitHub
+  fails the recorded sum; `--version` takes another release and then has only
+  `SHA256SUMS` to check against, which it says. The SteamVR driver, the services and
+  the desktop go in the home directory. Frametop's own eye tracker, a root service in
+  `/etc/frametop`, and the Bluetooth fixes, in `/etc/steamframe`, are the two parts
+  that ask for sudo, and each is offered, not forced. For 0.2.2, the zip's scripts and
+  the source tree inside its image were compared with the tagged commit: identical.
+  Frametop's commits and tags aren't signed, so GitHub's TLS and the maintainer's
+  account are the root of trust, as for Full Keyboard and BSManager. A source checkout
+  in `~/frametop` is left alone, but the launcher's Desktop entry and the services
+  switch to the release; that checkout's `install.sh` switches them back.
 - **KRdp's server** is the other direction: the Frame as the RDP host, for seeing and using a
   Plasma desktop that runs on it (Frametop's, or SteamOS's stock Desktop) from a PC. SteamOS has
   no krdp and Flathub only has the client, so `install-krdp.sh` builds it as a flatpak on KDE's
