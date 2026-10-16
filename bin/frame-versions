@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# steam-frame-utils: the versions of SteamOS, SteamVR and the Steam client on the Frame, the
+# numbers Valve's patch notes give, with each one's build and update channel.
+#
+# Usage:  frame-versions
+#
+# SteamVR comes with the OS image, under /opt/steamvr, and changes only with a SteamOS update.
+# The Steam client updates itself into ~/.local/share/Steam, so its version is read from there,
+# not from the deckard-steam-rel package, which keeps the client the image shipped with. The
+# client's version and SteamVR's build are Unix times, shown with their date.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "frame-versions: $*" >&2; exit 1; }
+
+case ${1:-} in
+  '') ;;
+  -h|--help) usage; exit 0 ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+when() { date -ud "@$1" '+%F %R UTC' 2>/dev/null || echo "?"; }
+row() { printf '%-13s %-11s %s\n' "$@"; }
+
+# --- SteamOS --------------------------------------------------------------------------------
+VERSION_ID='?' BUILD_ID='?'
+# shellcheck source=/dev/null
+[[ -r /etc/os-release ]] && . /etc/os-release
+branch=$(timeout 5 steamos-select-branch -c 2>/dev/null) || branch='?'
+row SteamOS "$VERSION_ID" "build $BUILD_ID, $branch channel"
+
+# --- SteamVR --------------------------------------------------------------------------------
+# vrcmd prints the version without SteamVR running; vrserver's log says it at each start.
+vr=/opt/steamvr
+ver=$(timeout 5 "$vr/bin/linuxarm64/vrcmd" --version 2>/dev/null) ||
+  ver=$(sed -n 's/.* vrserver \([0-9.]*\) startup .*/\1/p' \
+    ~/.local/share/Steam/logs/vrserver.txt 2>/dev/null | tail -1)
+# version.txt ends in CRLF, and a CR left in would send the row back to its start.
+build=$(tr -dc 0-9 <"$vr/bin/version.txt" 2>/dev/null) || build=
+if [[ -n $build ]]; then
+  row SteamVR "${ver:-?}" "build $build ($(when "$build"))"
+else
+  row SteamVR "${ver:-?}" "no $vr/bin/version.txt"
+fi
+
+# --- Steam client ---------------------------------------------------------------------------
+# package/beta names the channel when it isn't the default one, and the manifest is named after
+# it; the manifest's "version" is the one Settings > About shows.
+pkg=$(readlink -f ~/.steam/steam 2>/dev/null || echo ~/.local/share/Steam)/package
+beta=$(cat "$pkg/beta" 2>/dev/null) || beta=
+manifest=$pkg/steam_client_${beta:+${beta}_}linuxarm64.manifest
+if [[ ! -r $manifest ]]; then
+  manifest=$(ls -t "$pkg"/steam_client_*.manifest 2>/dev/null | head -1)
+fi
+# linux_arm64_beta_861407927dc8efb407da7cf is the beta channel.
+channel=$(sed 's/^linux_arm64_//; s/_[0-9a-f]\{16,\}$//' <<<"$beta")
+client=$(sed -n 's/^\t"version"\t*"\([0-9]*\)"$/\1/p' "$manifest" 2>/dev/null | head -1)
+if [[ -n $client ]]; then
+  row "Steam client" "$client" "built $(when "$client"), ${channel:-stable} channel"
+else
+  row "Steam client" "?" "no client manifest under $pkg"
+fi
