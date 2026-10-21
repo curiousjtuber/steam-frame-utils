@@ -131,19 +131,20 @@ desktop_restart=0
 say()  { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
 # act WHAT VERB [PART] -- a change: "would VERB WHAT" with --check, "VERB WHAT" otherwise.
 # Interactive, it is a question first, "VERB WHAT? [Y/n]", and false when declined, unless PART
-# was offered and taken this run (in $offered), or is "asked", for a question put elsewhere, as
-# rc_write's with the diff.
+# was offered and taken this run (in $offered), or is "asked", for a question put elsewhere, or
+# "rc", for one rc_write puts with the diff, which then counts the change.
 offered=
 act() {
   if (( check )); then changed=1; say "would $2" "$1"; return 0; fi
   local part=${3:-}
-  if (( interactive )) && [[ $part != asked && " $offered " != *" ${part:-/} "* ]]; then
+  if (( interactive )) && [[ $part != asked && $part != rc && " $offered " != *" ${part:-/} "* ]]
+  then
     ask "$(printf '%-14s %s' "$2" "${1//$HOME/\~}")?" yes yes no
     if [[ $answer == no ]]; then say "skip" "$1: declined"; return 1; fi
     changed=1
     return 0
   fi
-  changed=1
+  [[ $part == rc ]] || changed=1
   say "$2" "$1"
 }
 die()  { echo "setup.sh: $*" >&2; exit 1; }
@@ -190,11 +191,13 @@ rc_write() {
     fi
     rc_backed_up[$file]=1
   fi
+  changed=1
   command mv -f "$new" "$file"
 }
 # rc_append FILE TEXT -- TEXT goes after FILE's last line, as by append
 rc_append() {
   if (( ! interactive )); then
+    changed=1
     printf '%s\n' "$2" | append "$1"
     return
   fi
@@ -238,7 +241,7 @@ ensure_block() {
       say "ok" "$file: block $name"
       return
     fi
-    act "$file: block $name" "update" asked
+    act "$file: block $name" "update" rc
     (( check )) && return
     awk -v b="$begin" -v e="$end" -v f="$content" '
       $0 == b { print; while ((getline l < f) > 0) print l; skip = 1; next }
@@ -246,7 +249,7 @@ ensure_block() {
       !skip' "$file" > "$file.tmp.$$"
     rc_write "$file" "$file.tmp.$$"
   else
-    act "$file: block $name" "add" asked
+    act "$file: block $name" "add" rc
     (( check )) && return
     if [[ $where == top && -s $file ]]; then
       { printf '%s\n' "$want"; cat "$file"; } > "$file.tmp.$$"
@@ -273,7 +276,7 @@ remove_block() {
   local file=$1 name=$2
   local begin="# >>> steam-frame-utils: $name >>>" end="# <<< steam-frame-utils: $name <<<"
   [[ -f $file ]] && grep -qxF -- "$begin" "$file" || return 0
-  act "$file: block $name" "remove" asked
+  act "$file: block $name" "remove" rc
   (( check )) && return
   awk -v b="$begin" -v e="$end" '$0 == b { skip = 1 } !skip; $0 == e { skip = 0 }' "$file" \
     > "$file.tmp.$$"
@@ -487,7 +490,7 @@ for rc in "$HOME/.bashrc" "$HOME/.profile"; do
   if [[ -f $rc ]] && grep -qE "^[^#]*PATH=.*(~|\\\$HOME|\\\$\\{HOME\\}|$HOME)/\\.local/bin" "$rc"; then
     say "ok" "$rc: ~/.local/bin on PATH"
   else
-    act "$rc: export PATH=~/.local/bin:\$PATH" "add" asked
+    act "$rc: export PATH=~/.local/bin:\$PATH" "add" rc
     (( check )) || rc_append "$rc" 'export PATH=~/.local/bin:$PATH'
   fi
 done
