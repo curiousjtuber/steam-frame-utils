@@ -35,15 +35,16 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 ```
 
 With no options, on a terminal, it is an interactive installer: it goes through the options
-below in its usual order, and each part that is installed shows as `ok` and is kept current, as
-if its option were given, while each part that is missing is asked about there and installed
-right away. emacs and waypipe are asked as host, box or neither. Each change to `~/.bashrc`,
-`~/.zshrc`, `~/.profile` or `~/.distroboxrc` is shown as a diff and asked about, and the file is
-copied to `<file>.bak-<timestamp>` before the run first changes it. Enter takes the default, yes on
-a first run (the [fresh-Frame](#a-fresh-frame) set) and no on a re-run, so pressing Enter all
-the way through a re-run adds nothing. Switching a route in place takes the option. Inside a
-distrobox it asks only what the box allows. Without a terminal, or with any option, it asks
-nothing.
+below in its usual order, and each part that is installed shows as `ok`, while each part that is
+missing is asked about there and installed right away. emacs and waypipe are asked as host, box
+or neither. Every change is asked about before it is made: a copy, a backup or an install on its
+own line (`copy ~/.config/...? [Y/n]`), and a change to `~/.bashrc`, `~/.zshrc`, `~/.profile` or
+`~/.distroboxrc` with its diff, the file copied to `<file>.bak-<timestamp>` before the run first
+changes it. A part just taken up isn't asked again for each of its steps. Enter takes the
+default: for a missing part, yes on a first run (the [fresh-Frame](#a-fresh-frame) set) and no
+on a re-run, so pressing Enter through a re-run adds nothing; for a change to what is there, yes.
+Switching a route in place takes the option. Inside a distrobox it asks only what the box
+allows. Without a terminal, or with any option, it asks nothing.
 
 ```bash
 ~/steam-frame-utils/setup.sh --check
@@ -65,8 +66,8 @@ Always, whatever the options:
 | `distrobox/distroboxrc` | inserts into `~/.distroboxrc`, which puts this checkout's `bin/` first for distrobox |
 | `bin/` | goes on `PATH` from this checkout, through `shell-init/bin.sh` (see [Shell init](#shell-init)), so a `git pull` updates its scripts. A copy in `~/.local/bin` from an earlier version would come first, so it is backed up to `<file>.bak-<timestamp>` |
 | `shell-init/frametop.sh` | sourced from the block at the top of `~/.bashrc`, and of `~/.zshrc` if that exists (see [Shell init](#shell-init)) |
-| `environment.d/` | copies to `~/.config/environment.d/`; reboot afterwards |
-| `autostart/` | copies to `~/.config/autostart/`, and to `~/.config/frametop/autostart/` once Frametop is installed, with this checkout's path in `Exec`; each desktop picks it up at its next start |
+| `environment.d/` | through `bin/sw-cursor`: copies to `~/.config/environment.d/`, unless `sw-cursor off` was chosen; reboot afterwards (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)). Interactive, it is offered when nothing is there |
+| `autostart/` | with the software cursor: copies to `~/.config/autostart/`, and to `~/.config/frametop/autostart/` once Frametop is installed, with this checkout's path in `Exec`; each desktop picks it up at its next start |
 
 Options add the rest, and each one also fixes only what's missing:
 
@@ -531,7 +532,8 @@ copy out of the way.
 
 In Desktop Mode the mouse moves but its cursor isn't drawn. KWin puts the cursor on a hardware
 plane, which the headset's view doesn't show. `KWIN_FORCE_SW_CURSOR=1` makes KWin draw it into the
-frame itself. The fix comes from Cas and Chary XR's
+frame itself. SteamOS 0.5.6 draws the controller's mouse-mode cursor on its own, but not a real
+mouse's, Deskflow's for one, so the fix stays the default. The fix comes from Cas and Chary XR's
 [Steam Frame: 10 Things To Do FIRST](https://www.youtube.com/watch?v=jtW2mQd5qYI), credited
 there to ThrillSeeker.
 
@@ -545,20 +547,17 @@ Desktop Mode Konsole confirms it.
 sw-cursor            # what is set, SteamOS's default, and what the running desktop got
 sw-cursor on         # the software cursor for the next sessions
 sw-cursor off        # without it
-sw-cursor default    # SteamOS's default again
+sw-cursor default    # the default again, on
 ```
 
-SteamOS 0.5.6 draws the stock desktop's cursor itself, so the default is the fix below 0.5.6 and
-nothing from it on (`CURSOR_FIXED_IN` in `bin/sw-cursor`, from `VERSION_ID` in `/etc/os-release`).
-`setup.sh` runs `sw-cursor auto`: the default where nothing was chosen, which also removes a copy
-installed by an earlier run from 0.5.6 on. `on` and `off` are a choice it keeps, written into the
-file with a marker line (`KWIN_FORCE_SW_CURSOR=0` for `off`, so a later run neither reinstalls nor
-removes it); `default` forgets the choice. A file there that isn't steam-frame-utils' is left
-alone by `auto` and `default`, and backed up by `on` and `off`. The Frametop desktop still needs
-the variable on 0.5.6, and since `environment.d` would give it to both desktops, Frametop's
-session script sets it for its own KWin instead, so `sw-cursor` doesn't change its cursor.
-[docs/desktop-cursor.md](docs/desktop-cursor.md) has what was found on 0.5.6 and how to re-check
-on the next SteamOS.
+`setup.sh` runs `sw-cursor auto`: the default where nothing was chosen. Interactive, with
+nothing in place, it offers the software cursor instead. `on` and `off` are a choice it keeps,
+written into the file with a marker line (`KWIN_FORCE_SW_CURSOR=0` for `off`, so a later run
+neither reinstalls nor removes it); `default` forgets the choice. A file there that isn't
+steam-frame-utils' is left alone by `auto` and `default`, and backed up by `on` and `off`.
+Frametop's session script sets the variable for its own KWin, so `sw-cursor` doesn't change the
+Frametop desktop's cursor. [docs/desktop-cursor.md](docs/desktop-cursor.md) has what was found on
+0.5.6.
 
 ### Cursor size
 
@@ -586,7 +585,7 @@ installs `autostart/steam-frame-utils-cursor.desktop` in each desktop's autostar
 `cursor-size --apply`, which gives KWin the saved setting without changing it. The cursor is 256 px
 for the second or two until Plasma reaches autostart. SteamOS 0.5.6 keeps the size itself, but
 only without the software cursor; with it the desktops take gamescope's 256 px again, so the entry
-goes wherever the `environment.d` file does, and is removed where that is.
+goes wherever the `environment.d` file does, and is removed with `sw-cursor off`.
 
 The obvious place, a script in `plasma-workspace/env/` exporting the variables before KWin starts,
 doesn't work on the Frame, and that's worth knowing for anything else one might put there. Plasma

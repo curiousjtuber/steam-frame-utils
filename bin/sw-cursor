@@ -5,16 +5,16 @@
 # Usage:  sw-cursor
 #         sw-cursor on|off|default [--check]
 #
-# With no argument it says what is set, what SteamOS's default is, and what the running Desktop
-# Mode's KWin was given. KWin reads the variable once, at start, so a change takes a reboot; the
-# running desktop keeps what it has.
+# With no argument it says what is set and what the running Desktop Mode was given. KWin reads
+# the variable once, at start, so a change takes a reboot; the running desktop keeps what it has.
 #
-# on and off are a choice that setup.sh keeps: it writes the file with a marker line, and
-# `KWIN_FORCE_SW_CURSOR=0` for off, so that a later setup.sh run neither removes nor reinstalls
-# it. default forgets the choice and takes SteamOS's: the fix below 0.5.6, which doesn't draw the
-# cursor without it, nothing from 0.5.6 on, which draws it itself (see docs/desktop-cursor.md).
-# A file there that isn't steam-frame-utils' is backed up by on and off, and left alone by
-# default. --check reports what would change, and changes nothing.
+# The default is on: without it KWin puts the cursor on a hardware plane the headset's view
+# doesn't show. SteamOS 0.5.6 draws the controller's mouse-mode cursor on its own, but not a real
+# mouse's, Deskflow's for one (see docs/desktop-cursor.md). on and off are a choice that setup.sh
+# keeps: the file gets a marker line, and `KWIN_FORCE_SW_CURSOR=0` for off, so that a later
+# setup.sh run neither removes nor reinstalls it. default forgets the choice. A file there that
+# isn't steam-frame-utils' is backed up by on and off, and left alone by default. --check reports
+# what would change, and changes nothing.
 #
 # The cursor-size autostart entry goes with the software cursor, since with it the desktops take
 # gamescope's 256 px again: into ~/.config/autostart, and ~/.config/frametop/autostart when
@@ -27,8 +27,6 @@
 set -euo pipefail
 
 SRC=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-# The first SteamOS whose stock desktop draws the mouse cursor itself, and keeps its size.
-CURSOR_FIXED_IN=0.5.6
 CONF=$HOME/.config/environment.d/90-kwin-software-cursor.conf
 DEFAULT_CONF=$SRC/environment.d/90-kwin-software-cursor.conf
 ENTRY=steam-frame-utils-cursor.desktop
@@ -53,17 +51,6 @@ done
 
 say() { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
 act() { if (( check )); then say "would $2" "$1"; else say "$2" "$1"; fi; }
-# version_below A B -- A sorts before B as a version (0.4.5 before 0.5.6, 0.5.10 after it)
-version_below() { [[ $1 != "$2" && $(printf '%s\n' "$1" "$2" | sort -V | head -1) == "$1" ]]; }
-
-# SteamOS's VERSION_ID, 0.5.6 and so on; inside a distrobox the host's os-release is under
-# /run/host. Empty where there is none, as on another machine: then the fix is the default.
-osrel=/etc/os-release
-[[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]] && osrel=/run/host/etc/os-release
-os_version=$(. "$osrel" 2>/dev/null; echo "${VERSION_ID:-}")
-if [[ -z $os_version ]] || version_below "$os_version" "$CURSOR_FIXED_IN"; then os_default=on
-else os_default=off; fi
-
 # state -- the file: none, default (setup.sh's copy), on or off (chosen here), or other
 state() {
   if [[ ! -e $CONF && ! -L $CONF ]]; then echo none
@@ -82,7 +69,7 @@ value() { case $1 in default|on) echo on ;; off) echo off ;; *) echo ;; esac; }
 describe() {
   case $1 in
     none) echo "none" ;;
-    default) echo "on, setup.sh's copy for SteamOS below $CURSOR_FIXED_IN" ;;
+    default) echo "on, the default" ;;
     on|off) echo "$1, chosen with sw-cursor $1" ;;
     other) echo "not steam-frame-utils': left alone" ;;
   esac
@@ -111,8 +98,6 @@ running() {
 if [[ -z $verb ]]; then
   s=$(state)
   say "set" "$(describe "$s") ($CONF)"
-  if [[ -n $os_version ]]; then say "default" "$os_default on SteamOS $os_version"
-  else say "default" "on; no SteamOS version here"; fi
   say "Desktop Mode" "$(running)"
   for dir in "$HOME/.config" "$HOME/.config/frametop"; do
     [[ -f $dir/autostart/$ENTRY ]] && say "size entry" "$dir/autostart/$ENTRY"
@@ -137,11 +122,6 @@ put() {
   (( check )) || install -D -m 0644 "$1" "$CONF"
   conf_changed=1
 }
-remove_conf() {
-  act "$CONF: $1" "remove"
-  (( check )) || command rm -f "$CONF"
-  conf_changed=1
-}
 
 s=$(state)
 case $verb in
@@ -161,15 +141,9 @@ case $verb in
     elif [[ $s == other ]]; then
       say "skip" "$CONF isn't steam-frame-utils' cursor fix; left alone"
       want=     # not known what it sets; the size entries stay as they are
-    elif [[ $os_default == on ]]; then
-      if [[ -n $os_version ]]; then why="SteamOS $os_version doesn't draw the cursor without it"
-      else why="no SteamOS version here; the fix goes in"; fi
-      put "$DEFAULT_CONF" "$why"
-      want=on
     else
-      if [[ $s == none ]]; then say "ok" "no cursor fix: SteamOS $os_version draws the cursor itself"
-      else remove_conf "SteamOS $os_version draws the cursor itself"; fi
-      want=off
+      put "$DEFAULT_CONF" "the software cursor, the default"
+      want=on
     fi
     ;;
 esac
@@ -229,7 +203,7 @@ if (( ! conf_changed && ! entry_changed )); then
 elif (( check )); then
   echo "run without --check to apply"
 else
-  (( conf_changed )) && echo "reboot: environment.d is read at login, and KWin takes the variable at its start"
+  (( conf_changed )) && echo "reboot: environment.d is read at login, KWin takes the variable at its start"
   (( entry_changed )) && echo "the cursor size autostart entry runs at a desktop's next start"
 fi
 exit 0

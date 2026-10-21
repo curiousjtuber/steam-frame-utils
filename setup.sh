@@ -13,10 +13,12 @@
 #
 # With no options at all, on a terminal, it is interactive: each optional part is checked in its
 # turn, as if its option were given when it is installed, and when it is missing it asks, then
-# installs it right away. Each change to ~/.bashrc, ~/.zshrc, ~/.profile or ~/.distroboxrc is
-# shown as a diff and asked about, and the file is backed up before its first change. Enter takes
-# the default: yes on a first run (the fresh-Frame set of README.md), no on a re-run. Without a
-# terminal, or with any option (--check alone, say), it asks nothing.
+# installs it right away. Every change is asked about before it is made, a copy or an install on
+# its own line, a change to ~/.bashrc, ~/.zshrc, ~/.profile or ~/.distroboxrc with its diff, and
+# such a file is backed up before its first change; a part just taken up isn't asked again for
+# each of its steps. Enter takes the default: for a missing part, yes on a first run (the
+# fresh-Frame set of README.md) and no on a re-run; for a change, yes. Without a terminal, or
+# with any option (--check alone, say), it asks nothing.
 #
 # --check           report what would change, and change nothing
 # --yes             answer yes: create the arch box, and replace an installed emacs or waypipe
@@ -127,7 +129,23 @@ reboot_needed=0
 desktop_restart=0
 
 say()  { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
-act()  { changed=1; if (( check )); then say "would $2" "$1"; else say "$2" "$1"; fi; }
+# act WHAT VERB [PART] -- a change: "would VERB WHAT" with --check, "VERB WHAT" otherwise.
+# Interactive, it is a question first, "VERB WHAT? [Y/n]", and false when declined, unless PART
+# was offered and taken this run (in $offered), or is "asked", for a question put elsewhere, as
+# rc_write's with the diff.
+offered=
+act() {
+  if (( check )); then changed=1; say "would $2" "$1"; return 0; fi
+  local part=${3:-}
+  if (( interactive )) && [[ $part != asked && " $offered " != *" ${part:-/} "* ]]; then
+    ask "$(printf '%-14s %s' "$2" "${1//$HOME/\~}")?" yes yes no
+    if [[ $answer == no ]]; then say "skip" "$1: declined"; return 1; fi
+    changed=1
+    return 0
+  fi
+  changed=1
+  say "$2" "$1"
+}
 die()  { echo "setup.sh: $*" >&2; exit 1; }
 
 # append FILE -- stdin goes after the file's last line, even one without a trailing newline
@@ -203,8 +221,8 @@ copy_file() {
     say "ok" "$dst"
     return 1
   fi
+  act "$dst" "copy" || return 1
   [[ -e $dst || -L $dst ]] && backup "$dst"
-  act "$dst" "copy"
   (( check )) || install -D -m "$mode" "$src" "$dst"
 }
 
@@ -220,7 +238,7 @@ ensure_block() {
       say "ok" "$file: block $name"
       return
     fi
-    act "$file: block $name" "update"
+    act "$file: block $name" "update" asked
     (( check )) && return
     awk -v b="$begin" -v e="$end" -v f="$content" '
       $0 == b { print; while ((getline l < f) > 0) print l; skip = 1; next }
@@ -228,7 +246,7 @@ ensure_block() {
       !skip' "$file" > "$file.tmp.$$"
     rc_write "$file" "$file.tmp.$$"
   else
-    act "$file: block $name" "add"
+    act "$file: block $name" "add" asked
     (( check )) && return
     if [[ $where == top && -s $file ]]; then
       { printf '%s\n' "$want"; cat "$file"; } > "$file.tmp.$$"
@@ -255,7 +273,7 @@ remove_block() {
   local file=$1 name=$2
   local begin="# >>> steam-frame-utils: $name >>>" end="# <<< steam-frame-utils: $name <<<"
   [[ -f $file ]] && grep -qxF -- "$begin" "$file" || return 0
-  act "$file: block $name" "remove"
+  act "$file: block $name" "remove" asked
   (( check )) && return
   awk -v b="$begin" -v e="$end" '$0 == b { skip = 1 } !skip; $0 == e { skip = 0 }' "$file" \
     > "$file.tmp.$$"
@@ -469,7 +487,7 @@ for rc in "$HOME/.bashrc" "$HOME/.profile"; do
   if [[ -f $rc ]] && grep -qE "^[^#]*PATH=.*(~|\\\$HOME|\\\$\\{HOME\\}|$HOME)/\\.local/bin" "$rc"; then
     say "ok" "$rc: ~/.local/bin on PATH"
   else
-    act "$rc: export PATH=~/.local/bin:\$PATH" "add"
+    act "$rc: export PATH=~/.local/bin:\$PATH" "add" asked
     (( check )) || rc_append "$rc" 'export PATH=~/.local/bin:$PATH'
   fi
 done
@@ -479,9 +497,8 @@ done
 DISTROBOX=$HOME/.local/bin/distrobox
 if [[ -x $DISTROBOX ]]; then
   say "ok" "distrobox $("$DISTROBOX" version 2>/dev/null | sed 's/.*: *//')"
-else
-  act "distrobox into ~/.local" "install"
-  (( check )) || curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install \
+elif act "distrobox into ~/.local" "install" && (( ! check )); then
+  curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install \
     | sh -s -- --prefix "$HOME/.local"
 fi
 
@@ -503,7 +520,7 @@ for src in "$SRC"/bin/*; do
   old=$HOME/.local/bin/$name
   [[ -f $old && ! -L $old ]] || continue
   if sed -n 2p "$old" | grep -q '^# steam-frame-utils:'; then
-    act "$old -> $old.bak-$STAMP, an earlier version's copy of bin/$name" "back up"
+    act "$old -> $old.bak-$STAMP, an earlier version's copy of bin/$name" "back up" || continue
     (( check )) || command mv -f "$old" "$old.bak-$STAMP"
   else
     say "skip" "$old isn't from steam-frame-utils, and hides bin/$name; left alone"
@@ -511,22 +528,48 @@ for src in "$SRC"/bin/*; do
 done
 
 # --- Mouse cursor in Desktop Mode ---------------------------------------------------------------
-# bin/sw-cursor holds the policy: the environment.d software cursor below SteamOS 0.5.6, nothing
-# from 0.5.6 on, a choice made with `sw-cursor on|off` kept, and the cursor-size autostart entry
-# wherever the software cursor is (see docs/desktop-cursor.md). It reports in this script's
-# style, and says by its exit status what changed: 100 the environment.d file, 101 the autostart
-# entries only.
+# bin/sw-cursor holds the policy: the environment.d software cursor, a choice made with
+# `sw-cursor on|off` kept, and the cursor-size autostart entry wherever the software cursor is
+# (see docs/desktop-cursor.md). It reports in this script's style, and says by its exit status
+# what changed: 100 the environment.d file, 101 the autostart entries only. Interactive, with
+# nothing in place it is offered; otherwise a dry run shows what would change, and that is asked.
 
-args=(auto)
-(( check )) && args+=(--check)
-rc=0
-"$SRC/bin/sw-cursor" "${args[@]}" || rc=$?
-case $rc in
-  0) ;;
-  100) changed=1 reboot_needed=1 ;;
-  101) changed=1 desktop_restart=1 ;;
-  *) die "bin/sw-cursor failed (exit $rc)" ;;
-esac
+CURSOR_CONF=$HOME/.config/environment.d/90-kwin-software-cursor.conf
+# sw_cursor_run [--check] -- sw-cursor auto, its exit status into changed and the notes
+sw_cursor_run() {
+  local rc=0
+  "$SRC/bin/sw-cursor" auto "$@" || rc=$?
+  case $rc in
+    0) ;;
+    100) changed=1 reboot_needed=1 ;;
+    101) changed=1 desktop_restart=1 ;;
+    *) die "bin/sw-cursor failed (exit $rc)" ;;
+  esac
+  return $rc
+}
+if (( ! interactive )); then
+  args=()
+  (( check )) && args+=(--check)
+  sw_cursor_run "${args[@]}" || true
+elif [[ ! -e $CURSOR_CONF && ! -L $CURSOR_CONF ]]; then
+  printf '%-14s %s\n' missing "Desktop Mode's software cursor (sw-cursor on), for a real mouse,"
+  more "Deskflow's say: SteamOS 0.5.6 draws only the controller's mouse-mode cursor without it"
+  ask "$(printf '%-14s %s' "" "Enable it?")" "$dflt" yes no
+  if [[ $answer == yes ]]; then sw_cursor_run || true
+  else say "skip" "software cursor: not enabled; sw-cursor on does it later"
+  fi
+else
+  rc=0
+  "$SRC/bin/sw-cursor" auto --check || rc=$?
+  if (( rc == 100 || rc == 101 )); then
+    ask "$(printf '%-14s %s' "" "Make the cursor changes above?")" yes yes no
+    if [[ $answer == yes ]]; then sw_cursor_run || true
+    else say "skip" "cursor files: left as they are"
+    fi
+  elif (( rc )); then
+    die "bin/sw-cursor failed (exit $rc)"
+  fi
+fi
 
 # --- Nerd Fonts: --nerd-fonts ------------------------------------------------------------------
 # Only whether each font is there at all; updating needs the network, so it is left to
@@ -543,7 +586,7 @@ if [[ -n $nerd_fonts ]]; then
     elif (( interactive )) && ! offer "Nerd Fonts $name." "Install it?"; then
       continue
     else
-      act "Nerd Fonts $name into ${FONTS%/*}" "install"
+      act "Nerd Fonts $name into ${FONTS%/*}" "install" asked
       fonts_missing+=("$name")
     fi
   done
@@ -636,8 +679,8 @@ if (( interactive && ! want_waypipe )) && [[ $waypipe_have == none ]]; then
   offer_route waypipe 1 "Arch Linux ARM's package, relocated under ~/.local" \
     "a copy of the $BOX box's, which pacman in the box keeps current"
   case $answer in
-    host) want_waypipe=1 waypipe_route=host ;;
-    box) want_waypipe=1 waypipe_route=box want_arch=1 ;;
+    host) want_waypipe=1 waypipe_route=host offered+=" waypipe" ;;
+    box) want_waypipe=1 waypipe_route=box want_arch=1 offered+=" waypipe" ;;
   esac
 fi
 
@@ -646,15 +689,13 @@ if (( want_waypipe )) && [[ $waypipe_route == host ]]; then
   # fresh install gets them through install-waypipe.sh; this is for a waypipe from before.
   if "$SRC/bin/pacman-home" keyring --check >/dev/null 2>&1; then
     say "ok" "Arch Linux ARM's signing keys in pacman-home's keyring"
-  else
-    act "Arch Linux ARM's signing keys into pacman-home's keyring (pacman-home keyring)" "install"
+  elif act "Arch Linux ARM's signing keys into pacman-home's keyring (pacman-home keyring)" "install"; then
     (( check )) || "$SRC/bin/pacman-home" keyring
   fi
   ver=$("$SRC/bin/pacman-home" -Q waypipe 2>/dev/null | awk '{print $2}') || true
   if [[ -n $ver ]]; then
     say "ok" "waypipe $ver from Arch Linux ARM, in pacman-home's database"
-  else
-    act "waypipe from Arch Linux ARM under ~/.local, via install-waypipe.sh" "install"
+  elif act "waypipe from Arch Linux ARM under ~/.local, via install-waypipe.sh" "install" waypipe; then
     (( check )) || bash "$SRC/install-waypipe.sh"
   fi
 fi
@@ -669,21 +710,21 @@ fi
 MISE=$HOME/.local/bin/mise
 
 if (( interactive && ! want_mise )); then
-  if [[ -x $MISE ]] || offer "mise, with rust through it." "Install it?"; then want_mise=1; fi
+  if [[ -x $MISE ]]; then want_mise=1
+  elif offer "mise, with rust through it." "Install it?"; then want_mise=1 offered+=" mise"
+  fi
 fi
 
 if (( want_mise )); then
   if [[ -x $MISE ]]; then
     say "ok" "mise $("$MISE" --version 2>/dev/null | cut -d' ' -f1)"
-  else
-    act "mise into ~/.local/bin" "install"
+  elif act "mise into ~/.local/bin" "install" mise; then
     (( check )) || curl -fsSL https://mise.run | MISE_INSTALL_PATH=$MISE sh >/dev/null
   fi
   # From $HOME, so that the global config answers rather than some project's .mise.toml.
   if [[ -x $MISE ]] && (cd && "$MISE" which cargo >/dev/null 2>&1); then
     say "ok" "rust $(cd && "$MISE" exec -- rustc --version 2>/dev/null | cut -d' ' -f2) through mise"
-  else
-    act "rust through mise (mise use -g rust), for cargo" "install"
+  elif act "rust through mise (mise use -g rust), for cargo" "install" mise; then
     (( check )) || (cd && "$MISE" use -g rust)
   fi
 fi
@@ -708,7 +749,7 @@ if (( interactive )); then
     offer_route emacs "$host_ok" "pkgbuilds/emacs built here, under ~/.local (about 3 minutes)" \
       "the $BOX box's emacs-wayland, exported to ~/.local/bin"
     case $answer in
-      host) want_emacs=1 emacs_route=host ;;
+      host) want_emacs=1 emacs_route=host offered+=" pkg:emacs-wayland" ;;
       box) want_emacs=1 emacs_route=box want_arch=1 ;;
     esac
   fi
@@ -726,6 +767,7 @@ if (( interactive )); then
     if (( ${#pkgs_missing[@]} )) \
       && offer "${names// / and } from pkgbuilds/, built here under ~/.local." "$question"; then
       pkgs+=("${pkgs_missing[@]}")
+      for name in "${pkgs_missing[@]}"; do offered+=" pkg:$name"; done
     fi
     if (( ${#pkgs[@]} )); then
       want_packages=1 packages=$(IFS=,; echo "${pkgs[*]}")
@@ -783,7 +825,8 @@ if (( want_packages )); then
       say "ok" "$name $have, in pacman-home's database"
       continue
     fi
-    act "$name ${pkg_ver[$name]}${have:+, replacing $have} (makepkg in ${pkg_dir[$name]#$SRC/}, pacman-home -U)" "build"
+    act "$name ${pkg_ver[$name]}${have:+, replacing $have} (makepkg in ${pkg_dir[$name]#$SRC/}, pacman-home -U)" "build" "pkg:$name" \
+      || continue
     (( check )) && continue
     ( cd "${pkg_dir[$name]}" && MAKEFLAGS=${MAKEFLAGS:--j$(nproc)} makepkg -f ) \
       || die "makepkg failed in ${pkg_dir[$name]#$SRC/}"
@@ -799,30 +842,29 @@ fi
 BREW_PREFIX=/home/linuxbrew/.linuxbrew
 BREW=$BREW_PREFIX/bin/brew
 
-# brew_ensure FORMULA
+# brew_ensure FORMULA [PART]
 brew_ensure() {
   if [[ -x $BREW ]] && "$BREW" list --formula "$1" >/dev/null 2>&1; then
     say "ok" "$1 from Homebrew"
     return
   fi
-  act "$1 from Homebrew" "brew install"
+  act "$1 from Homebrew" "brew install" "${2:-}" || return 0
   (( check )) && return
   HOMEBREW_NO_ENV_HINTS=1 "$BREW" install "$1"
 }
 
 if (( interactive && host_ok && ! want_brew )); then
-  if [[ -x $BREW ]] \
-    || offer "Homebrew, with wl-clipboard; uses sudo once, to create /home/linuxbrew." "Install it?"
+  if [[ -x $BREW ]]; then want_brew=1
+  elif offer "Homebrew, with wl-clipboard; uses sudo once, to create /home/linuxbrew." "Install it?"
   then
-    want_brew=1
+    want_brew=1 offered+=" brew"
   fi
 fi
 
 if (( want_brew )); then
   if [[ -x $BREW ]]; then
     say "ok" "Homebrew $("$BREW" --version 2>/dev/null | sed -n '1s/^Homebrew //p')"
-  else
-    act "Homebrew into $BREW_PREFIX" "install"
+  elif act "Homebrew into $BREW_PREFIX" "install" brew; then
     if (( ! check )); then
       # The installer needs sudo only where it can't write /home/linuxbrew, and it can't ask for a
       # password when it runs unattended. With the directory ours, it needs none.
@@ -831,13 +873,15 @@ if (( want_brew )); then
         "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
   fi
-  brew_ensure wl-clipboard
+  brew_ensure wl-clipboard brew
 fi
 
 if (( interactive && want_brew && ! want_zsh )); then
-  if [[ -x $BREW_PREFIX/bin/zsh ]] || offer "zsh from Homebrew." "Install it?"; then want_zsh=1; fi
+  if [[ -x $BREW_PREFIX/bin/zsh ]]; then want_zsh=1
+  elif offer "zsh from Homebrew." "Install it?"; then want_zsh=1 offered+=" zsh"
+  fi
 fi
-(( want_zsh )) && brew_ensure zsh
+(( want_zsh )) && brew_ensure zsh zsh
 
 # --- The arch box: --arch, --emacs=box, --waypipe=box ---------------------------------------------
 
@@ -874,7 +918,7 @@ if (( want_arch )); then
   elif (( check )); then
     act "$BOX distrobox from $IMAGE ($IMAGE_SIZE)" "create"
   elif confirm_box; then
-    act "$BOX distrobox from $IMAGE" "create"
+    act "$BOX distrobox from $IMAGE" "create" asked
     "$DISTROBOX" create --yes --name "$BOX" --image "$IMAGE" --pre-init-hooks "$PRE_INIT_HOOK"
     have_box=1
   else
@@ -919,7 +963,7 @@ if (( interactive && host_ok )) && [[ -z $tailscale ]]; then
     tailscale=plain
     if offer "tailscale0 in firewalld's trusted zone, so the tailnet reaches the Frame's ports." \
       "Trust it?" no; then
-      tailscale=trust
+      tailscale=trust offered+=" tailscale"
     fi
   else
     printf '%-14s %s\n' missing "Tailscale, a system service, installed with sudo; trust also puts"
@@ -928,8 +972,8 @@ if (( interactive && host_ok )) && [[ -z $tailscale ]]; then
     [[ $dflt == yes ]] && default=trust
     ask "$(printf '%-14s %s' "" "Tailscale?")" "$default" trust yes no
     case $answer in
-      trust) tailscale=trust ;;
-      yes) tailscale=plain ;;
+      trust) tailscale=trust offered+=" tailscale" ;;
+      yes) tailscale=plain offered+=" tailscale" ;;
       no) ts_declined=1 ;;
     esac
   fi
@@ -956,24 +1000,22 @@ else
   elif [[ -z $tailscale ]]; then
     say "missing" "tailscaled: ${ts_missing[*]} (re-run with --tailscale, or see README.md#tailscale)"
   elif ts_needs binaries || ts_needs unit; then
-    act "tailscaled: ${ts_missing[*]}, via install-tailscale.sh" "install"
-    if (( ! check )); then
+    if act "tailscaled: ${ts_missing[*]}, via install-tailscale.sh" "install" tailscale \
+      && (( ! check )); then
       args=()
       [[ $tailscale == trust ]] && args+=(--trust-tailnet)
       sudo bash "$SRC/install-tailscale.sh" "${args[@]}"
     fi
   else
-    if ts_needs enabled; then
-      act "tailscaled" "enable"
+    if ts_needs enabled && act "tailscaled" "enable" tailscale; then
       (( check )) || sudo systemctl enable tailscaled
     fi
-    if ts_needs running; then
-      act "tailscaled" "start"
+    if ts_needs running && act "tailscaled" "start" tailscale; then
       (( check )) || sudo systemctl start tailscaled
     fi
-    if ts_needs trusted; then
+    if ts_needs trusted \
+      && act "tailscale0 in firewalld's trusted zone, kept across updates" "trust" tailscale; then
       # The same steps install-tailscale.sh --trust-tailnet takes, without reinstalling.
-      act "tailscale0 in firewalld's trusted zone, kept across updates" "trust"
       if (( ! check )); then
         sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
         sudo firewall-cmd --reload
