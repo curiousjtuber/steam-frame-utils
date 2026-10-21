@@ -46,28 +46,34 @@ its native cursor at the size System Settings has.
 
 ## What setup.sh does with it
 
-`setup.sh` reads `VERSION_ID` from `/etc/os-release` (`/run/host/etc/os-release`
-in a distrobox) and compares it with `CURSOR_FIXED_IN`, 0.5.6, through
-`sort -V`.
+`bin/sw-cursor` holds the policy; `setup.sh` runs `sw-cursor auto`. It reads
+`VERSION_ID` from `/etc/os-release` (`/run/host/etc/os-release` in a
+distrobox) and compares it with `CURSOR_FIXED_IN`, 0.5.6, through `sort -V`.
 
 | SteamOS | software cursor | size entry |
 |---|---|---|
 | below 0.5.6 | installed | installed |
 | 0.5.6 and up | removed if it is ours | removed if it is ours |
 | no `VERSION_ID` (`FORCE=1` off the Frame) | installed | installed |
+| chosen with `sw-cursor on` or `off` | kept | with the choice |
 
 A removed file is recognised first: the `environment.d` one by content, the
 entry by its `Name=` line, so one rendered with an older checkout path goes
-too. Anything else of the same name is left alone with a `skip`. The
-`environment.d` change needs a reboot either way.
+too. A choice is a file whose first line is `# steam-frame-utils: sw-cursor on`
+or `off`, then `KWIN_FORCE_SW_CURSOR=1` or `=0`; `sw-cursor default` drops it.
+Anything else of the same name is left alone with a `skip`. The
+`environment.d` change needs a reboot either way: KWin reads the variable once,
+at its start (a function-local static in kwin 6.2's `compositor_wayland.cpp`),
+so nothing switches it in a running desktop.
 
 ## Re-checking on a new SteamOS
 
 `bin/frame-versions` gives the version. Then:
 
-1. Open the stock desktop with no `~/.config/environment.d/90-kwin-software-cursor.conf`
-   (`setup.sh` removes it on 0.5.6 and up; reboot after any change there): is
+1. Open the stock desktop without the software cursor (`sw-cursor off`, or
+   `sw-cursor default` on 0.5.6 and up; reboot after any change there): is
    the cursor drawn, and at the size System Settings has? If not, that SteamOS
-   needs the fix again: raise `CURSOR_FIXED_IN` to a version above it.
+   needs the fix again: raise `CURSOR_FIXED_IN` in `bin/sw-cursor` to a version
+   above it. `sw-cursor` with no argument says what the running desktop got.
 2. Open the Frametop desktop with the `export KWIN_FORCE_SW_CURSOR=1` line in
    its session script commented out: if the cursor is drawn, the line can go.

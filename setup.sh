@@ -91,12 +91,6 @@ IN_BOX_RUN=${SFU_IN_BOX:-}
 PACMAN_HOME=$SRC/bin/pacman-home
 WAYPIPE=$HOME/.local/bin/waypipe
 DEFAULT_FONTS=JetBrainsMono,NerdFontsSymbolsOnly
-# The first SteamOS whose stock desktop draws the mouse cursor itself, and keeps its size, without
-# the environment.d software cursor; below it that fix goes in, from it on a copy from an earlier
-# run is removed (Frametop's desktop, which still needs the variable, sets it in its own session).
-# The cursor-size autostart entry goes wherever the software cursor does, since with it the
-# desktops take gamescope's size again. See docs/desktop-cursor.md.
-CURSOR_FIXED_IN=0.5.6
 
 check=0 yes=0 want_brew=0 want_zsh=0 want_arch=0 want_emacs=0 want_waypipe=0 want_mise=0
 want_packages=0
@@ -135,8 +129,6 @@ desktop_restart=0
 say()  { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
 act()  { changed=1; if (( check )); then say "would $2" "$1"; else say "$2" "$1"; fi; }
 die()  { echo "setup.sh: $*" >&2; exit 1; }
-# version_below A B -- A sorts before B as a version (0.4.5 before 0.5.6, 0.5.10 after it)
-version_below() { [[ $1 != "$2" && $(printf '%s\n' "$1" "$2" | sort -V | head -1) == "$1" ]]; }
 
 # append FILE -- stdin goes after the file's last line, even one without a trailing newline
 append() {
@@ -283,8 +275,6 @@ fi
 osrel=/etc/os-release
 [[ -n $box ]] && osrel=/run/host/etc/os-release
 os=$(. "$osrel" 2>/dev/null; echo "${ID:-?} ${VARIANT_ID:-?}")
-# SteamOS's VERSION_ID, 0.5.6 and so on; empty where there is none, as with FORCE=1 elsewhere.
-os_version=$(. "$osrel" 2>/dev/null; echo "${VERSION_ID:-}")
 if [[ $os != "steamos vr" || $(uname -m) != aarch64 ]]; then
   echo "setup.sh: this isn't a Steam Frame (os-release: $os, arch: $(uname -m));" \
     "set FORCE=1 to run anyway" >&2
@@ -521,60 +511,22 @@ for src in "$SRC"/bin/*; do
 done
 
 # --- Mouse cursor in Desktop Mode ---------------------------------------------------------------
-# Below CURSOR_FIXED_IN only: environment.d reaches both desktops, and Frametop's, which still
-# needs the variable, sets it in its own session script. With no version known, as with FORCE=1
-# off the Frame, the fix goes in as it always did. sw_cursor says whether the file is there after
-# this run, for the size entry below.
+# bin/sw-cursor holds the policy: the environment.d software cursor below SteamOS 0.5.6, nothing
+# from 0.5.6 on, a choice made with `sw-cursor on|off` kept, and the cursor-size autostart entry
+# wherever the software cursor is (see docs/desktop-cursor.md). It reports in this script's
+# style, and says by its exit status what changed: 100 the environment.d file, 101 the autostart
+# entries only.
 
-conf=90-kwin-software-cursor.conf
-dst=$HOME/.config/environment.d/$conf
-sw_cursor=1
-if [[ -z $os_version ]] || version_below "$os_version" "$CURSOR_FIXED_IN"; then
-  copy_file "$SRC/environment.d/$conf" "$dst" 0644 && reboot_needed=1
-elif [[ ! -e $dst && ! -L $dst ]]; then
-  say "ok" "no cursor fix: SteamOS $os_version draws the cursor itself"
-  sw_cursor=0
-elif [[ -f $dst && ! -L $dst ]] && cmp -s "$SRC/environment.d/$conf" "$dst"; then
-  act "$dst: SteamOS $os_version draws the cursor itself" "remove"
-  (( check )) || command rm -f "$dst"
-  reboot_needed=1
-  sw_cursor=0
-else
-  say "skip" "$dst isn't steam-frame-utils' cursor fix; left alone"
-fi
-
-# Its size, with the software cursor: an autostart entry runs bin/cursor-size --apply in each
-# desktop, the stock one from ~/.config/autostart and Frametop's from its own config dir, once
-# Frametop has made that. The Exec path is this checkout's, so the entry is rendered first; the
-# rc files' $HOME form won't do in a .desktop file. Not plasma-workspace/env: on the Frame that
-# mechanism is dead, see the README. Without the software cursor an entry of ours is removed; it
-# is known by its Name line, whatever checkout path it was rendered with.
-entry=steam-frame-utils-cursor.desktop
-if (( sw_cursor )); then
-  content=$(mktemp)
-  sed "s|@SRC@|$SRC|g" "$SRC/autostart/$entry" > "$content"
-  for dir in "$HOME/.config" "$HOME/.config/frametop"; do
-    if [[ $dir == */frametop && ! -d $dir ]]; then
-      say "skip" "$dir/autostart/$entry: no Frametop; re-run after installing it"
-      continue
-    fi
-    copy_file "$content" "$dir/autostart/$entry" 0644 && desktop_restart=1
-  done
-  command rm -f "$content"
-else
-  for dir in "$HOME/.config" "$HOME/.config/frametop"; do
-    dst=$dir/autostart/$entry
-    if [[ ! -e $dst && ! -L $dst ]]; then
-      [[ $dir == */frametop && ! -d $dir ]] ||
-        say "ok" "no cursor size entry in $dir: without the software cursor the size keeps"
-    elif [[ -f $dst && ! -L $dst ]] && grep -qxF 'Name=steam-frame-utils cursor size' "$dst"; then
-      act "$dst: without the software cursor the size keeps" "remove"
-      (( check )) || command rm -f "$dst"
-    else
-      say "skip" "$dst isn't steam-frame-utils' entry; left alone"
-    fi
-  done
-fi
+args=(auto)
+(( check )) && args+=(--check)
+rc=0
+"$SRC/bin/sw-cursor" "${args[@]}" || rc=$?
+case $rc in
+  0) ;;
+  100) changed=1 reboot_needed=1 ;;
+  101) changed=1 desktop_restart=1 ;;
+  *) die "bin/sw-cursor failed (exit $rc)" ;;
+esac
 
 # --- Nerd Fonts: --nerd-fonts ------------------------------------------------------------------
 # Only whether each font is there at all; updating needs the network, so it is left to

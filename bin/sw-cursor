@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# steam-frame-utils: the software mouse cursor of SteamOS's stock Desktop Mode, on or off for the
+# next sessions: KWIN_FORCE_SW_CURSOR in ~/.config/environment.d, which systemd reads at login.
+#
+# Usage:  sw-cursor
+#         sw-cursor on|off|default [--check]
+#
+# With no argument it says what is set, what SteamOS's default is, and what the running Desktop
+# Mode's KWin was given. KWin reads the variable once, at start, so a change takes a reboot; the
+# running desktop keeps what it has.
+#
+# on and off are a choice that setup.sh keeps: it writes the file with a marker line, and
+# `KWIN_FORCE_SW_CURSOR=0` for off, so that a later setup.sh run neither removes nor reinstalls
+# it. default forgets the choice and takes SteamOS's: the fix below 0.5.6, which doesn't draw the
+# cursor without it, nothing from 0.5.6 on, which draws it itself (see docs/desktop-cursor.md).
+# A file there that isn't steam-frame-utils' is backed up by on and off, and left alone by
+# default. --check reports what would change, and changes nothing.
+#
+# The cursor-size autostart entry goes with the software cursor, since with it the desktops take
+# gamescope's 256 px again: into ~/.config/autostart, and ~/.config/frametop/autostart when
+# Frametop is installed. The Frametop desktop sets the variable in its own session script, so its
+# cursor doesn't change with this.
+#
+# auto is what setup.sh runs: default where nothing was chosen, exiting 100 when the environment.d
+# file changed, or with --check would, and 101 when only the autostart entries did.
+
+set -euo pipefail
+
+SRC=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+# The first SteamOS whose stock desktop draws the mouse cursor itself, and keeps its size.
+CURSOR_FIXED_IN=0.5.6
+CONF=$HOME/.config/environment.d/90-kwin-software-cursor.conf
+DEFAULT_CONF=$SRC/environment.d/90-kwin-software-cursor.conf
+ENTRY=steam-frame-utils-cursor.desktop
+ENTRY_NAME='Name=steam-frame-utils cursor size'
+MARKER='# steam-frame-utils: sw-cursor'
+STAMP=$(date +%Y%m%d-%H%M%S)
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "sw-cursor: $*" >&2; exit 1; }
+
+verb= check=0
+while (( $# )); do
+  case $1 in
+    on|off|default|auto) [[ -z $verb ]] || die "one of on, off, default only"; verb=$1 ;;
+    --check) check=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+(( check )) && [[ -z $verb ]] && die "--check goes with on, off or default"
+
+say() { printf '%-14s %s\n' "$1" "${2//$HOME/\~}"; }
+act() { if (( check )); then say "would $2" "$1"; else say "$2" "$1"; fi; }
+# version_below A B -- A sorts before B as a version (0.4.5 before 0.5.6, 0.5.10 after it)
+version_below() { [[ $1 != "$2" && $(printf '%s\n' "$1" "$2" | sort -V | head -1) == "$1" ]]; }
+
+# SteamOS's VERSION_ID, 0.5.6 and so on; inside a distrobox the host's os-release is under
+# /run/host. Empty where there is none, as on another machine: then the fix is the default.
+osrel=/etc/os-release
+[[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]] && osrel=/run/host/etc/os-release
+os_version=$(. "$osrel" 2>/dev/null; echo "${VERSION_ID:-}")
+if [[ -z $os_version ]] || version_below "$os_version" "$CURSOR_FIXED_IN"; then os_default=on
+else os_default=off; fi
+
+# state -- the file: none, default (setup.sh's copy), on or off (chosen here), or other
+state() {
+  if [[ ! -e $CONF && ! -L $CONF ]]; then echo none
+  elif [[ ! -f $CONF || -L $CONF ]]; then echo other
+  elif cmp -s "$DEFAULT_CONF" "$CONF"; then echo default
+  else
+    case $(head -n1 "$CONF") in
+      "$MARKER on") echo on ;;
+      "$MARKER off") echo off ;;
+      *) echo other ;;
+    esac
+  fi
+}
+# value STATE -- on or off, what that file gives KWin; empty for none and other
+value() { case $1 in default|on) echo on ;; off) echo off ;; *) echo ;; esac; }
+describe() {
+  case $1 in
+    none) echo "none" ;;
+    default) echo "on, setup.sh's copy for SteamOS below $CURSOR_FIXED_IN" ;;
+    on|off) echo "$1, chosen with sw-cursor $1" ;;
+    other) echo "not steam-frame-utils': left alone" ;;
+  esac
+}
+
+# What the running Desktop Mode's session was given, if it runs. KWin's own environ can't be
+# read (kwin_wayland has cap_sys_nice), so plasmashell's stands in: startplasma gives both the
+# same environment. The stock desktop is told from Frametop's by its runtime dir, as cursor-size
+# does.
+running() {
+  local pid env v
+  for pid in $(pgrep -u "$(id -u)" -x plasmashell); do
+    { env=$(tr '\0' '\n' < "/proc/$pid/environ"); } 2>/dev/null || continue
+    grep -qxF "XDG_RUNTIME_DIR=/run/user/$(id -u)/nested_plasma" <<<"$env" || continue
+    v=$(sed -n 's/^KWIN_FORCE_SW_CURSOR=//p' <<<"$env")
+    case $v in
+      1) echo "running with the software cursor" ;;
+      '') echo "running without it, the variable unset" ;;
+      *) echo "running without it, the variable $v" ;;
+    esac
+    return
+  done
+  echo "not running"
+}
+
+if [[ -z $verb ]]; then
+  s=$(state)
+  say "set" "$(describe "$s") ($CONF)"
+  if [[ -n $os_version ]]; then say "default" "$os_default on SteamOS $os_version"
+  else say "default" "on; no SteamOS version here"; fi
+  say "Desktop Mode" "$(running)"
+  for dir in "$HOME/.config" "$HOME/.config/frametop"; do
+    [[ -f $dir/autostart/$ENTRY ]] && say "size entry" "$dir/autostart/$ENTRY"
+  done
+  exit 0
+fi
+
+# --- The environment.d file ---------------------------------------------------------------------
+
+conf_changed=0
+# put CONTENT_FILE -- it becomes CONF; a file that isn't ours is backed up first
+put() {
+  if [[ -f $CONF && ! -L $CONF ]] && cmp -s "$1" "$CONF"; then
+    say "ok" "$CONF: $(describe "$(state)")"
+    return
+  fi
+  if [[ $(state) == other ]]; then
+    if (( check )); then say "would back up" "$CONF"
+    else command mv -f "$CONF" "$CONF.bak-$STAMP"; say "back up" "$CONF -> $CONF.bak-$STAMP"; fi
+  fi
+  act "$CONF: $2" "write"
+  (( check )) || install -D -m 0644 "$1" "$CONF"
+  conf_changed=1
+}
+remove_conf() {
+  act "$CONF: $1" "remove"
+  (( check )) || command rm -f "$CONF"
+  conf_changed=1
+}
+
+s=$(state)
+case $verb in
+  on|off)
+    content=$(mktemp)
+    printf '%s %s\n' "$MARKER" "$verb" > "$content"
+    if [[ $verb == on ]]; then echo 'KWIN_FORCE_SW_CURSOR=1' >> "$content"
+    else echo 'KWIN_FORCE_SW_CURSOR=0' >> "$content"; fi
+    put "$content" "software cursor $verb, chosen; setup.sh keeps it"
+    command rm -f "$content"
+    want=$verb
+    ;;
+  default|auto)
+    if [[ $verb == auto && ( $s == on || $s == off ) ]]; then
+      say "ok" "$CONF: $(describe "$s")"
+      want=$s
+    elif [[ $s == other ]]; then
+      say "skip" "$CONF isn't steam-frame-utils' cursor fix; left alone"
+      want=     # not known what it sets; the size entries stay as they are
+    elif [[ $os_default == on ]]; then
+      if [[ -n $os_version ]]; then why="SteamOS $os_version doesn't draw the cursor without it"
+      else why="no SteamOS version here; the fix goes in"; fi
+      put "$DEFAULT_CONF" "$why"
+      want=on
+    else
+      if [[ $s == none ]]; then say "ok" "no cursor fix: SteamOS $os_version draws the cursor itself"
+      else remove_conf "SteamOS $os_version draws the cursor itself"; fi
+      want=off
+    fi
+    ;;
+esac
+
+# --- The cursor-size autostart entries ---------------------------------------------------------
+# Rendered with this checkout's path; the rc files' $HOME form won't do in a .desktop file. An
+# entry of ours is known by its Name line, whatever path it was rendered with.
+
+entry_changed=0
+if [[ -z $want ]]; then
+  :
+elif [[ $want == on ]]; then
+  content=$(mktemp)
+  sed "s|@SRC@|$SRC|g" "$SRC/autostart/$ENTRY" > "$content"
+  for dir in "$HOME/.config" "$HOME/.config/frametop"; do
+    dst=$dir/autostart/$ENTRY
+    if [[ $dir == */frametop && ! -d $dir ]]; then
+      say "skip" "$dst: no Frametop; re-run after installing it"
+    elif [[ -f $dst && ! -L $dst ]] && cmp -s "$content" "$dst"; then
+      say "ok" "$dst"
+    else
+      if [[ -e $dst || -L $dst ]]; then
+        if (( check )); then say "would back up" "$dst"
+        else command mv -f "$dst" "$dst.bak-$STAMP"; say "back up" "$dst -> $dst.bak-$STAMP"; fi
+      fi
+      act "$dst" "copy"
+      (( check )) || install -D -m 0644 "$content" "$dst"
+      entry_changed=1
+    fi
+  done
+  command rm -f "$content"
+else
+  for dir in "$HOME/.config" "$HOME/.config/frametop"; do
+    dst=$dir/autostart/$ENTRY
+    if [[ ! -e $dst && ! -L $dst ]]; then
+      [[ $dir == */frametop && ! -d $dir ]] ||
+        say "ok" "no cursor size entry in $dir: without the software cursor the size keeps"
+    elif [[ -f $dst && ! -L $dst ]] && grep -qxF "$ENTRY_NAME" "$dst"; then
+      act "$dst: without the software cursor the size keeps" "remove"
+      (( check )) || command rm -f "$dst"
+      entry_changed=1
+    else
+      say "skip" "$dst isn't steam-frame-utils' entry; left alone"
+    fi
+  done
+fi
+
+# --- Done ---------------------------------------------------------------------------------------
+
+if [[ $verb == auto ]]; then
+  (( conf_changed )) && exit 100
+  (( entry_changed )) && exit 101
+  exit 0
+fi
+if (( ! conf_changed && ! entry_changed )); then
+  echo "nothing to change"
+elif (( check )); then
+  echo "run without --check to apply"
+else
+  (( conf_changed )) && echo "reboot: environment.d is read at login, and KWin takes the variable at its start"
+  (( entry_changed )) && echo "the cursor size autostart entry runs at a desktop's next start"
+fi
+exit 0

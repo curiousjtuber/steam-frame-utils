@@ -15,6 +15,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/podman` | lets distrobox work from Desktop Mode and the Frametop desktop (see [Distrobox in Desktop Mode](#distrobox-in-desktop-mode)) |
 | `bin/bsmanager` | BSManager on the Frame, in a window on a Linux PC through waypipe (see [Apps](#apps)) |
 | `bin/cursor-size [SIZE] [--theme NAME] [--desktop frametop\|stock]` | shows or sets the mouse cursor's size in Desktop Mode or the Frametop desktop, and applies it to the running desktop (see [Cursor size](#cursor-size)) |
+| `bin/sw-cursor [on\|off\|default]` | Desktop Mode's software cursor for the next sessions, or what is set now and what the running desktop got; `setup.sh` keeps a choice made here (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
 | `autostart/` | runs `cursor-size --apply` as each desktop starts, so the size set survives a restart; `setup.sh` installs it wherever it installs the software cursor, with which the desktops take gamescope's 256 px, and removes it otherwise (same section) |
 | `bin/wifi-known [--all]` | the Wi-Fi networks NetworkManager has saved that are in range, strongest first; Desktop Mode has no Plasma network applet, so this and `nmtui` stand in for it |
 | `bin/frame-versions` | the versions of SteamOS, SteamVR and the Steam client, as Valve's patch notes number them, with each one's build and update channel; SteamVR comes with the OS image and the client updates itself, so the client is read from `~/.local/share/Steam`, not from its package |
@@ -534,17 +535,30 @@ frame itself. The fix comes from Cas and Chary XR's
 [Steam Frame: 10 Things To Do FIRST](https://www.youtube.com/watch?v=jtW2mQd5qYI), credited
 there to ThrillSeeker.
 
-systemd reads `~/.config/environment.d` at login. `setup.sh` copies the file there; reboot
-afterwards. `env | grep KWIN` in a Desktop Mode Konsole confirms it. To undo it, delete
-`~/.config/environment.d/90-kwin-software-cursor.conf` and reboot.
+systemd reads `~/.config/environment.d` at login, and KWin reads the variable once, at its start,
+so a change takes a reboot; nothing switches it in a running desktop. `env | grep KWIN` in a
+Desktop Mode Konsole confirms it.
 
-SteamOS 0.5.6 draws the stock desktop's cursor itself. `setup.sh` reads `VERSION_ID` from
-`/etc/os-release` and installs the file below that version (`CURSOR_FIXED_IN` in `setup.sh`);
-from 0.5.6 on it removes a copy it installed earlier, and says to reboot. A file there that isn't
-its own is left alone. The Frametop desktop still needs the variable on 0.5.6, and since
-`environment.d` would give it to both desktops, Frametop's session script sets it for its own
-KWin instead. [docs/desktop-cursor.md](docs/desktop-cursor.md) has what was found on 0.5.6 and
-how to re-check on the next SteamOS.
+`bin/sw-cursor` manages the file, `~/.config/environment.d/90-kwin-software-cursor.conf`:
+
+```bash
+sw-cursor            # what is set, SteamOS's default, and what the running desktop got
+sw-cursor on         # the software cursor for the next sessions
+sw-cursor off        # without it
+sw-cursor default    # SteamOS's default again
+```
+
+SteamOS 0.5.6 draws the stock desktop's cursor itself, so the default is the fix below 0.5.6 and
+nothing from it on (`CURSOR_FIXED_IN` in `bin/sw-cursor`, from `VERSION_ID` in `/etc/os-release`).
+`setup.sh` runs `sw-cursor auto`: the default where nothing was chosen, which also removes a copy
+installed by an earlier run from 0.5.6 on. `on` and `off` are a choice it keeps, written into the
+file with a marker line (`KWIN_FORCE_SW_CURSOR=0` for `off`, so a later run neither reinstalls nor
+removes it); `default` forgets the choice. A file there that isn't steam-frame-utils' is left
+alone by `auto` and `default`, and backed up by `on` and `off`. The Frametop desktop still needs
+the variable on 0.5.6, and since `environment.d` would give it to both desktops, Frametop's
+session script sets it for its own KWin instead, so `sw-cursor` doesn't change its cursor.
+[docs/desktop-cursor.md](docs/desktop-cursor.md) has what was found on 0.5.6 and how to re-check
+on the next SteamOS.
 
 ### Cursor size
 
@@ -567,13 +581,12 @@ the one that runs (Frametop's first), or the one `--desktop frametop|stock` name
 running it saves the setting for both. Apps that draw their own cursor, X11 ones and some older
 toolkits, size it from the `XCURSOR_SIZE` the desktop started with.
 
-At each start KWin takes gamescope's variables again, so `setup.sh` installs
-`autostart/steam-frame-utils-cursor.desktop` in each desktop's autostart dir; it runs
+At each start KWin takes gamescope's variables again, so `sw-cursor` (and `setup.sh` through it)
+installs `autostart/steam-frame-utils-cursor.desktop` in each desktop's autostart dir; it runs
 `cursor-size --apply`, which gives KWin the saved setting without changing it. The cursor is 256 px
 for the second or two until Plasma reaches autostart. SteamOS 0.5.6 keeps the size itself, but
-only without the software cursor; with it the desktops take gamescope's 256 px again, so
-`setup.sh` installs the entry wherever it installs the `environment.d` file, and removes it where
-it removes that.
+only without the software cursor; with it the desktops take gamescope's 256 px again, so the entry
+goes wherever the `environment.d` file does, and is removed where that is.
 
 The obvious place, a script in `plasma-workspace/env/` exporting the variables before KWin starts,
 doesn't work on the Frame, and that's worth knowing for anything else one might put there. Plasma
