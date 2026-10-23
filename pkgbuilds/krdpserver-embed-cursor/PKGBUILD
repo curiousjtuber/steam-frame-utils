@@ -1,0 +1,79 @@
+# krdpserver with an EmbedCursor option, as a package beside the distro's krdp, for the x86_64
+# Arch or CachyOS PC that serves its desktop to KRDC on the Frame. Not for the Frame: the
+# Frame's server is the flatpak apps/install-krdp.sh builds, and setup.sh skips this directory.
+#
+# krdp sends a viewer the pointer's shape, which the viewer draws at its own pointer, so moving
+# the mouse at the PC shows in the stream as focus changes with no pointer. With EmbedCursor=true
+# in [General] of ~/.config/krdpserverrc (krdp-embed-cursor.patch), KWin paints the PC's own
+# pointer into the frames and the viewer is told to draw none, so the headset sees where the
+# PC's mouse is. Off, or absent, the server is upstream's exactly; the stock binary ignores it.
+#
+# The patch changes libKRdp, not only the server, so the package ships its own copy of the
+# library in a private directory and nothing it installs overlaps krdp: /usr/bin/krdpserver-
+# embed-cursor and /usr/lib/krdpserver-embed-cursor/libKRdp.so.6*. KDE_INSTALL_LIBDIR is what
+# puts a RUNPATH for that directory into both, so the patched library loads rather than
+# /usr/lib/libKRdp.so.6; moving the file after a stock build would silently use the stock one.
+# The KCM, desktop file, unit and translations build but stay in the staging directory: krdp
+# supplies them, and the unit is the same app-org.kde.krdpserver.service either way.
+#
+# Build and install (plasma-wayland-protocols is a build-time dependency only; -s installs it
+# as a dependency, -r removes it afterwards, -i runs pacman -U):
+#   makepkg -sri
+# makepkg verifies the tarball's signature with the user's keyring, so import KDE's release
+# keys (validpgpkeys below) once, or pass --skippgpcheck; the sha256 is checked either way.
+#
+# Switching is a user systemd drop-in, no pacman call: next to the one that adds --plasma,
+#   d=~/.config/systemd/user/app-org.kde.krdpserver.service.d
+#   printf '[Service]\nExecStart=\nExecStart=/usr/bin/krdpserver-embed-cursor --plasma\n' > $d/zz-embed-cursor.conf
+#   systemctl --user daemon-reload && systemctl --user restart app-org.kde.krdpserver.service
+# and removing zz-embed-cursor.conf (then the same two commands) goes back to the stock one.
+# Remove it before uninstalling this package. The option itself:
+#   kwriteconfig6 --file krdpserverrc --group General --key EmbedCursor --type bool true
+# then restart the service; it reads the key once at start.
+#
+# pkgver must equal `pacman -Q krdp`: the private libKRdp is compiled against that release's
+# kpipewire, so depends pins krdp to it, and a Plasma point release makes pacman -Syu refuse
+# until this is rebuilt (bump pkgver, run updpkgsums, makepkg -sri, restart the service), or
+# update first with --assume-installed krdp=<old version>. If the patch no longer applies,
+# upstream moved the code and the patch needs refreshing. The tarball's sha256 is Arch's.
+
+pkgname=krdpserver-embed-cursor
+pkgver=6.8.1
+_dirver=$(echo $pkgver | cut -d. -f1-3)
+pkgrel=1
+pkgdesc="KDE's krdpserver with an EmbedCursor option, the host's pointer painted into the stream, beside krdp"
+arch=(x86_64)
+url='https://invent.kde.org/plasma/krdp'
+license=(LGPL-2.0-or-later)
+depends=("krdp=${pkgver}")
+makedepends=(extra-cmake-modules
+             plasma-wayland-protocols)
+source=(https://download.kde.org/stable/plasma/$_dirver/krdp-$pkgver.tar.xz{,.sig}
+        krdp-embed-cursor.patch)
+sha256sums=('32c3351ca396aa15801961a4db62a2b452f35bab8a91fb0c862ce99d4d1d4a23'
+            'SKIP'
+            'f590391b4fa5385ac1f79f4cfc51fe5abb36852a818d176c534568f1fd5ea839')
+validpgpkeys=('E0A3EB202F8E57528E13E72FD7574483BB57B18D'  # Jonathan Esk-Riddell <jr@jriddell.org>
+              '0AAC775BB6437A8D9AF7A3ACFE0784117FBCE11D'  # Bhushan Shah <bshah@kde.org>
+              'D07BD8662C56CB291B316EB2F5675605C74E02CF'  # David Edmundson <davidedmundson@kde.org>
+              '1FA881591C26B276D7A5518EEAAF29B42A678C20') # Marco Martin <notmart@gmail.com>
+
+prepare() {
+  patch -d krdp-$pkgver -p1 < krdp-embed-cursor.patch
+}
+
+build() {
+  cmake -B build -S krdp-$pkgver \
+    -DKDE_INSTALL_LIBDIR=lib/$pkgname \
+    -DBUILD_TESTING=OFF \
+    -DBUILD_EXAMPLES=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$srcdir/stage" cmake --install build
+  install -Dm755 "$srcdir/stage/usr/bin/krdpserver" "$pkgdir/usr/bin/$pkgname"
+  install -dm755 "$pkgdir/usr/lib/$pkgname"
+  # the versioned library and its SONAME link, not the libKRdp.so link for linking against
+  cp -P "$srcdir/stage/usr/lib/$pkgname"/libKRdp.so.6* "$pkgdir/usr/lib/$pkgname/"
+}

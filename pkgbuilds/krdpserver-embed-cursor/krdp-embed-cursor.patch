@@ -1,0 +1,251 @@
+krdpserver gets an EmbedCursor option (Bool, [General] of krdpserverrc, default false).
+On, the compositor paints the host's own pointer into the frames (KWin's screencast in
+its Embedded cursor mode, 2 for the portal) and, once the client is streaming, the
+server sends it the null system pointer so it draws none of its own; a viewer then sees
+where the host's mouse is, as someone at the host's monitor does. Off, nothing changes:
+krdp captures with the cursor as metadata and sends the client the pointer's shape to
+draw at the client's own pointer, as before. KWin attaches no cursor metadata in
+Embedded mode, so the null pointer has to be sent explicitly; Streaming is set on the
+connection's own thread and may have passed before the wrapper exists, so the wrapper
+both connects to stateChanged and checks the state at once. The off path is upstream's
+exactly: a false argument, two if (false) tests, and the unchanged mode values.
+Made against krdp 6.8.1. server/krdpserversettings.kcfg is a symlink to the kcm's.
+
+diff --color -ruN --no-dereference krdp681/server/main.cpp edit/server/main.cpp
+--- a/server/main.cpp
++++ b/server/main.cpp
+@@ -171,6 +171,7 @@
+     } else {
+         controller.setOperationMode(config->exclusiveMode() ? SessionController::OperationMode::RemoteAccess : SessionController::OperationMode::SharedAccess);
+     }
++    controller.setEmbedCursor(config->embedCursor());
+ 
+     if (!server.start()) {
+         return -1;
+diff --color -ruN --no-dereference krdp681/server/SessionController.cpp edit/server/SessionController.cpp
+--- a/server/SessionController.cpp
++++ b/server/SessionController.cpp
+@@ -38,9 +38,10 @@
+ {
+     Q_OBJECT
+ public:
+-    SessionWrapper(KRdp::RdpConnection *conn, std::unique_ptr<KRdp::AbstractSession> &&sess, KStatusNotifierItem *sni)
++    SessionWrapper(KRdp::RdpConnection *conn, std::unique_ptr<KRdp::AbstractSession> &&sess, KStatusNotifierItem *sni, bool embedCursor)
+         : session(std::move(sess))
+         , connection(conn)
++        , m_embedCursor(embedCursor)
+     {
+         m_sni = sni;
+ 
+@@ -58,6 +59,14 @@
+         connect(connection->displayControl(), &KRdp::DisplayControl::requestedScreenSizeChanged, connection->videoStream(), &KRdp::VideoStream::setRequestedSize);
+ 
+         connect(connection, &QObject::destroyed, this, &SessionWrapper::onConnectionDestroyed);
++
++        if (m_embedCursor) {
++            session->setEmbedCursor(true);
++            connect(connection, &KRdp::RdpConnection::stateChanged, this, &SessionWrapper::onConnectionStateChanged);
++            // Streaming is set on the connection's own thread, so it may already have been
++            // reached before this (queued) handler of Activated created the wrapper.
++            onConnectionStateChanged(connection->state());
++        }
+     }
+ 
+     void onCursorUpdate(const PipeWireCursor &cursor)
+@@ -65,6 +74,11 @@
+         if (!connection) {
+             return;
+         }
++        if (m_embedCursor) {
++            // The cursor is in the frames; a compositor that sends metadata as well must
++            // not switch the client back to drawing one.
++            return;
++        }
+ 
+         KRdp::Cursor::CursorUpdate update;
+         update.hotspot = cursor.hotspot;
+@@ -72,6 +86,17 @@
+         connection->cursor()->update(update);
+     }
+ 
++    void onConnectionStateChanged(KRdp::RdpConnection::State state)
++    {
++        if (!connection || state != KRdp::RdpConnection::State::Streaming) {
++            return;
++        }
++        // The compositor paints the host's pointer into the frames and sends no cursor
++        // metadata, so nothing else would ever touch the client's pointer: tell it to draw none.
++        qInfo() << "EmbedCursor: the host's pointer is in the video, hiding the client's";
++        connection->cursor()->setCursorType(KRdp::Cursor::CursorType::Hidden);
++    }
++
+     void onVideoStreamEnabledChanged()
+     {
+         connection->videoStream()->setStreamingEnabled(m_sessionStarted && connection->videoStream()->enabled());
+@@ -96,6 +121,7 @@
+     QPointer<KRdp::RdpConnection> connection;
+     KStatusNotifierItem *m_sni;
+     bool m_sessionStarted = false;
++    bool m_embedCursor = false;
+ };
+ 
+ SessionController::SessionController(KRdp::Server *server, SessionType sessionType)
+@@ -166,6 +192,11 @@
+     m_adaptiveQuality = adaptive;
+ }
+ 
++void SessionController::setEmbedCursor(bool embed)
++{
++    m_embedCursor = embed;
++}
++
+ SessionController::OperationMode SessionController::operationMode() const
+ {
+     return m_operatingMode;
+@@ -204,7 +235,7 @@
+             return;
+         }
+ 
+-        auto wrapper = std::make_unique<SessionWrapper>(newConnection, makeSession(), m_sni);
++        auto wrapper = std::make_unique<SessionWrapper>(newConnection, makeSession(), m_sni, m_embedCursor);
+         if (m_virtualMonitor) {
+             wrapper->session->setVirtualMonitor(*m_virtualMonitor);
+         } else if (m_monitorIndex) {
+diff --color -ruN --no-dereference krdp681/server/SessionController.h edit/server/SessionController.h
+--- a/server/SessionController.h
++++ b/server/SessionController.h
+@@ -44,6 +44,7 @@
+     void setAdaptiveQuality(bool adaptive);
+     OperationMode operationMode() const;
+     void setOperationMode(OperationMode mode);
++    void setEmbedCursor(bool embed);
+     void setSNIStatus(const KRdp::RdpConnection::State state);
+     void stopFromSNI();
+ 
+@@ -59,6 +60,7 @@
+     std::optional<int> m_monitorIndex;
+     std::optional<int> m_quality;
+     bool m_adaptiveQuality = true;
++    bool m_embedCursor = false;
+     std::optional<KRdp::VirtualMonitor> m_virtualMonitor;
+ 
+     std::unique_ptr<KRdp::AbstractSession> m_initializationSession;
+diff --color -ruN --no-dereference krdp681/src/AbstractSession.cpp edit/src/AbstractSession.cpp
+--- a/src/AbstractSession.cpp
++++ b/src/AbstractSession.cpp
+@@ -20,6 +20,7 @@
+ public:
+     std::optional<int> activeStream;
+     std::optional<VirtualMonitor> virtualMonitor;
++    bool embedCursor = false;
+     bool started = false;
+     QSize size;
+     QSize logicalSize;
+@@ -106,6 +107,16 @@
+     d->virtualMonitor = virtualMonitor;
+ }
+ 
++void AbstractSession::setEmbedCursor(bool embed)
++{
++    d->embedCursor = embed;
++}
++
++bool AbstractSession::embedCursor() const
++{
++    return d->embedCursor;
++}
++
+ bool AbstractSession::isStarted() const
+ {
+     return d->started;
+diff --color -ruN --no-dereference krdp681/src/AbstractSession.h edit/src/AbstractSession.h
+--- a/src/AbstractSession.h
++++ b/src/AbstractSession.h
+@@ -41,6 +41,11 @@
+ 
+     void setActiveStream(int stream);
+     void setVirtualMonitor(const VirtualMonitor &vm);
++    /**
++     * Have the compositor paint the host's cursor into the frames instead of
++     * attaching it as metadata. Set before start(); the default is false.
++     */
++    void setEmbedCursor(bool embed);
+     quint32 nodeId() const;
+     int takePipeWireFd();
+ 
+@@ -77,6 +82,7 @@
+     QSize logicalSize() const;
+     std::optional<VirtualMonitor> virtualMonitor() const;
+     std::optional<int> activeStream() const;
++    bool embedCursor() const;
+ 
+     void setStarted(bool started);
+     void setLogicalSize(QSize size);
+diff --color -ruN --no-dereference krdp681/src/Cursor.h edit/src/Cursor.h
+--- a/src/Cursor.h
++++ b/src/Cursor.h
+@@ -53,9 +53,13 @@
+ 
+     void update(const CursorUpdate &update);
+ 
+-private:
++    /**
++     * Hidden sends the null system pointer, so the client draws no cursor;
++     * SystemDefault its default one. Only once the connection is Streaming.
++     */
+     void setCursorType(CursorType type);
+ 
++private:
+     class Private;
+     const std::unique_ptr<Private> d;
+ };
+diff --color -ruN --no-dereference krdp681/src/kcm/krdpserversettings.kcfg edit/src/kcm/krdpserversettings.kcfg
+--- a/src/kcm/krdpserversettings.kcfg
++++ b/src/kcm/krdpserversettings.kcfg
+@@ -47,5 +47,9 @@
+       <label>Disable the host monitors and create virtual screens for exclusive session use by a remote user</label>
+       <default>false</default>
+     </entry>
++    <entry name="embedCursor" key="EmbedCursor" type="Bool">
++      <label>Paint the host's pointer into the video and tell the client to draw none, instead of sending the pointer's shape for the client to draw at its own pointer</label>
++      <default>false</default>
++    </entry>
+   </group>
+ </kcfg>
+diff --color -ruN --no-dereference krdp681/src/PlasmaScreencastV1Session.cpp edit/src/PlasmaScreencastV1Session.cpp
+--- a/src/PlasmaScreencastV1Session.cpp
++++ b/src/PlasmaScreencastV1Session.cpp
+@@ -172,17 +172,18 @@
+ 
+ void PlasmaScreencastV1Session::start()
+ {
++    const auto cursorMode = embedCursor() ? Screencasting::Embedded : Screencasting::Metadata;
+     if (auto vm = virtualMonitor()) {
+-        d->request.reset(d->m_screencasting.createVirtualMonitorStream(vm->name, vm->size, vm->dpr, Screencasting::Metadata));
++        d->request.reset(d->m_screencasting.createVirtualMonitorStream(vm->name, vm->size, vm->dpr, cursorMode));
+     } else if (const auto streamIndex = activeStream()) {
+         if (*streamIndex >= qApp->screens().size()) {
+             qCWarning(KRDP) << "Invalid monitor index" << *streamIndex;
+             return;
+         }
+         auto screen = qApp->screens().at(*streamIndex);
+-        d->request.reset(d->m_screencasting.createOutputStream(screen, Screencasting::Metadata));
++        d->request.reset(d->m_screencasting.createOutputStream(screen, cursorMode));
+     } else {
+-        d->request.reset(d->m_screencasting.createWorkspaceStream(Screencasting::Metadata));
++        d->request.reset(d->m_screencasting.createWorkspaceStream(cursorMode));
+     }
+     connect(d->request.get(), &ScreencastingStream::failed, this, &PlasmaScreencastV1Session::error);
+     connect(d->request.get(), &ScreencastingStream::created, this, [this](uint nodeId) {
+diff --color -ruN --no-dereference krdp681/src/PortalSession.cpp edit/src/PortalSession.cpp
+--- a/src/PortalSession.cpp
++++ b/src/PortalSession.cpp
+@@ -179,7 +179,7 @@
+         parameters = {{QStringLiteral("types"), 1u}, // MONITOR
+                       {QStringLiteral("multiple"), activeStream().has_value()}};
+     }
+-    parameters[QStringLiteral("cursor_mode")] = 4u; // Metadata
++    parameters[QStringLiteral("cursor_mode")] = embedCursor() ? 2u : 4u; // Embedded : Metadata
+ 
+     new PortalRequest(d->screencastInterface->SelectSources(d->sessionPath, parameters), this, &PortalSession::onSourcesSelected);
+ }

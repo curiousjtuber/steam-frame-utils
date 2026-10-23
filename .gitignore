@@ -2,3 +2,10 @@
 *~
 \#*\#
 .\#*
+
+# makepkg, run in a pkgbuilds/ directory
+pkgbuilds/*/src/
+pkgbuilds/*/pkg/
+pkgbuilds/*/*.pkg.tar.*
+pkgbuilds/*/*.tar.xz
+pkgbuilds/*/*.tar.xz.sig

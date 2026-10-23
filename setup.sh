@@ -736,13 +736,20 @@ fi
 # One directory per package under pkgbuilds/, each a PKGBUILD for a ~/.local prefix (see
 # README.md#packages-for-the-host). pacman-home's database says what is installed, at which
 # version; a package missing or at another version is built with makepkg and installed with
-# pacman-home -U. Dependencies between the packages decide the order.
+# pacman-home -U. Dependencies between the packages decide the order. A PKGBUILD whose arch
+# leaves out the Frame's (pkgbuilds/krdpserver-embed-cursor, for the PC) is not a host package.
 
 # pkgbuild_info DIR -- "name ver-rel dep dep..." from the PKGBUILD, read the way makepkg does
 pkgbuild_info() {
   bash -c 'source "$1/PKGBUILD" >/dev/null 2>&1 || exit 1
     printf "%s %s-%s" "$pkgname" "$pkgver" "$pkgrel"
     for d in "${depends[@]}"; do printf " %s" "${d%%[<>=]*}"; done; echo' _ "$1"
+}
+
+# pkgbuild_for_host DIR -- true when the PKGBUILD's arch includes the Frame's: aarch64, or any
+pkgbuild_for_host() {
+  bash -c 'source "$1/PKGBUILD" >/dev/null 2>&1 || exit 1
+    for a in "${arch[@]}"; do [[ $a == aarch64 || $a == any ]] && exit 0; done; exit 1' _ "$1"
 }
 
 # Interactive: emacs's route when there is none, then the packages pacman-home has, and those it
@@ -760,7 +767,7 @@ if (( interactive )); then
     pkgs=() pkgs_missing=()
     [[ $emacs_route == host ]] && pkgs+=(emacs-wayland)
     for dir in "$SRC"/pkgbuilds/*/; do
-      [[ -f $dir/PKGBUILD ]] || continue
+      [[ -f $dir/PKGBUILD ]] && pkgbuild_for_host "${dir%/}" || continue
       read -r name _ < <(pkgbuild_info "${dir%/}") || continue
       [[ $name == emacs-wayland ]] && continue
       if "$PACMAN_HOME" -Q "$name" >/dev/null 2>&1; then pkgs+=("$name"); else pkgs_missing+=("$name"); fi
@@ -785,7 +792,7 @@ if (( want_packages )); then
   [[ -d $HOME/.local/share/mise/shims ]] && export PATH=$PATH:$HOME/.local/share/mise/shims
   declare -A pkg_dir pkg_ver pkg_deps
   for dir in "$SRC"/pkgbuilds/*/; do
-    [[ -f $dir/PKGBUILD ]] || continue
+    [[ -f $dir/PKGBUILD ]] && pkgbuild_for_host "${dir%/}" || continue
     read -r name ver deps < <(pkgbuild_info "${dir%/}") \
       || die "can't read $dir/PKGBUILD"
     pkg_dir[$name]=${dir%/} pkg_ver[$name]=$ver pkg_deps[$name]=$deps
