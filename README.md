@@ -24,9 +24,10 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/beat-saber-recent` | the songs Beat Saber started in its last two launches, in order, from the Unity logs in its Proton prefix; Unity keeps only two, so that is the reach, and `PlayerData.dat` has play counts but no dates |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode on SteamOS below 0.5.6; `setup.sh` installs it there and removes it from 0.5.6 on, where the stock desktop draws it itself and Frametop's session sets the variable for its own (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
-| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)); and two for the PC instead: `pkgbuilds/krdpserver-embed-cursor/`, a krdpserver that can paint the PC's own pointer into the stream (see [Apps](#apps)), and `pkgbuilds/frame-control-bin/`, [Frame Control](https://github.com/saphid/frame-control) as an Arch package built from its release `.deb` (`makepkg -si` on the PC; the PKGBUILD's header says what it changes) |
-| `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
-| `bin/makepkg-home` | builds one of `pkgbuilds/`, installs it with `pacman-home`, and offers to delete the build's leftovers (same section) |
+| `pkgbuilds/frame/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/frame/emacs/` is Emacs with PGTK, `pkgbuilds/frame/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/frame/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)) |
+| `pkgbuilds/pc/` | PKGBUILDs for an Arch PC instead, ordinary `/usr` packages installed with `makepkg -si` there: `pkgbuilds/pc/krdpserver-embed-cursor/`, a krdpserver that can paint the PC's own pointer into the stream (see [Apps](#apps)), and `pkgbuilds/pc/frame-control-bin/`, [Frame Control](https://github.com/saphid/frame-control) as an Arch package built from its release `.deb` (the PKGBUILD's header says what it changes) |
+| `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/frame/`, and stock binary packages it relocates (same section) |
+| `bin/makepkg-home` | builds one of `pkgbuilds/frame/`, installs it with `pacman-home`, and offers to delete the build's leftovers (same section) |
 | `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md); [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found; [the desktop cursor](docs/desktop-cursor.md), what SteamOS 0.5.6 changed for the two cursor fixes and how to re-check on the next one; [packages under `~/.local`](docs/home-packages.md), what each one took to get there; [paru](docs/paru.md), tried on the home database and dropped; [the screen reader](docs/orca-screen-reader.md), the command that silences Orca's "dummy output module" message and why Steam restarts it at every boot; and [trust](docs/TRUST.md), what `setup.sh` fetches and who is trusted at the root (the apps have [apps/TRUST.md](apps/TRUST.md)) |
 
 ## Setup
@@ -77,10 +78,10 @@ Options add the rest, and each one also fixes only what's missing:
 | `--brew` | Homebrew in `/home/linuxbrew/.linuxbrew` if it isn't there, wl-clipboard (`wl-copy` and `wl-paste`) from it, and `shell-init/brew.sh` in the block at the top of `~/.bashrc` and `~/.zshrc` (see [Homebrew](#homebrew)). Uses sudo once, to create `/home/linuxbrew`. Refused inside a distrobox |
 | `--zsh` | implies `--brew`. zsh from Homebrew, and an empty `~/.zshrc` if there is none, so zsh skips its new-user menu |
 | `--arch` | creates the `arch` distrobox from `docker.io/menci/archlinuxarm:latest`, Arch Linux ARM, if it doesn't exist (see [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md) for why that image, and for the pacman sandbox the box is created without). The image is about 0.7 GB and the first start takes a few minutes, so it says so and asks first; `--yes` skips the question |
-| `--emacs` | emacs from one of two sources (see [emacs and waypipe: host or box](#emacs-and-waypipe-host-or-box)). `=host`: `pkgbuilds/emacs/` built here and installed under `~/.local` by `pacman-home`, the same as `--packages=emacs-wayland`. `=box`: implies `--arch`; emacs-wayland, the pgtk build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin` (an export left by another box is replaced; anything else there is left alone). Bare, it keeps the route in place, host when there is none. Switching asks before replacing what is there; `--yes` answers |
+| `--emacs` | emacs from one of two sources (see [emacs and waypipe: host or box](#emacs-and-waypipe-host-or-box)). `=host`: `pkgbuilds/frame/emacs/` built here and installed under `~/.local` by `pacman-home`, the same as `--packages=emacs-wayland`. `=box`: implies `--arch`; emacs-wayland, the pgtk build, in the box, with `emacs` and `emacsclient` exported to `~/.local/bin` (an export left by another box is replaced; anything else there is left alone). Bare, it keeps the route in place, host when there is none. Switching asks before replacing what is there; `--yes` answers |
 | `--waypipe` | waypipe for the host from one of two sources (same section), and `shell-init/waypipe.sh` in `~/.bashrc` and `~/.zshrc` (see [The waypipe function](#the-waypipe-function)). `=host`, or `=arch`, its old name: Arch Linux ARM's package relocated under `~/.local` by `install-waypipe.sh` through `pacman-home`; it doesn't update waypipe, `install-waypipe.sh` does. `=box`: implies `--arch`; a copy of the box's `/usr/bin/waypipe`, the same package, which pacman in the box keeps current (`distrobox upgrade arch`) and a re-run refreshes. Bare and switching as for `--emacs` |
-| `--mise` | [mise](https://mise.jdx.dev) in `~/.local/bin` if it isn't there, `shell-init/mise.sh` in the `end` block of `~/.bashrc` and `~/.zshrc` unless the file activates mise already, and rust through it, `mise use -g rust`, for a Rust package in `pkgbuilds/` (see [mise](#mise)). It doesn't update the tools; `mise upgrade` does |
-| `--packages` | the packages in `pkgbuilds/`, built with makepkg and installed with `pacman-home`: each one `pacman-home` doesn't have at its PKGBUILD's version, in dependency order (see [Packages for the host](#packages-for-the-host)); `--packages=NAME,...` for some of them. A Rust package needs `--mise` for cargo |
+| `--mise` | [mise](https://mise.jdx.dev) in `~/.local/bin` if it isn't there, `shell-init/mise.sh` in the `end` block of `~/.bashrc` and `~/.zshrc` unless the file activates mise already, and rust through it, `mise use -g rust`, for a Rust package in `pkgbuilds/frame/` (see [mise](#mise)). It doesn't update the tools; `mise upgrade` does |
+| `--packages` | the packages in `pkgbuilds/frame/`, built with makepkg and installed with `pacman-home`: each one `pacman-home` doesn't have at its PKGBUILD's version, in dependency order (see [Packages for the host](#packages-for-the-host)); `--packages=NAME,...` for some of them. A Rust package needs `--mise` for cargo |
 | `--tailscale` | fixes what's missing of the install, with sudo: `install-tailscale.sh` if the binaries or the unit are gone, otherwise just `systemctl enable`/`start`. Adds `shell-init/tailscale.sh`. `--tailscale=trust` also puts `tailscale0` in firewalld's `trusted` zone. Logging in is only reported. Without the option, what's missing is still reported |
 | `--nerd-fonts` | runs `install-nerd-fonts.sh` for each font not installed yet: `JetBrainsMono` and `NerdFontsSymbolsOnly`, or a comma-separated list such as `--nerd-fonts=FiraCode,Hack`. It doesn't update installed ones; `install-nerd-fonts.sh` does that |
 
@@ -95,7 +96,7 @@ host, the box's part of `--emacs=box` and `--waypipe=box` runs through `distrobo
 
 Both come in two forms, and both forms put the same names in `~/.local/bin`, so one is in place
 at a time. The **host** route, the default, is `pacman-home`'s: emacs built from
-`pkgbuilds/emacs/` on the Frame itself, waypipe relocated from Arch Linux ARM's package (see
+`pkgbuilds/frame/emacs/` on the Frame itself, waypipe relocated from Arch Linux ARM's package (see
 [Packages for the host](#packages-for-the-host)). It needs no container to start, sees the
 Frame's own `/usr`, D-Bus and processes, and is updated by a rebuild (`--packages`) or by
 `install-waypipe.sh`; what it cannot do is run inside a distrobox, where the host's libraries
@@ -130,7 +131,7 @@ The whole of this on a new Frame, from a clone at `~/steam-frame-utils`:
 
 That is one run: `~/.local/bin` on `PATH`, distrobox, the cursor fix and the rc blocks; Homebrew
 with zsh and wl-clipboard; waypipe relocated from Arch Linux ARM; mise with rust; the packages in
-`pkgbuilds/`, pacman 7 and emacs, built here and installed under `~/.local` (`--emacs=box
+`pkgbuilds/frame/`, pacman 7 and emacs, built here and installed under `~/.local` (`--emacs=box
 --waypipe=box` in place of `--packages`'s emacs and `--waypipe` take the distrobox route instead,
 see [emacs and waypipe: host or box](#emacs-and-waypipe-host-or-box)); Tailscale as a system service, which asks for sudo and then for a login in a
 browser; and the fonts. The builds take about six minutes in all. The apps under `apps/` are
@@ -243,9 +244,9 @@ sudo at all.
 Homebrew supports arm64 Linux in full only on Ubuntu, so on SteamOS it is unsupported, though it
 works: the Frame's glibc 2.39 is the minimum the bottles need. zsh comes from here rather than a
 distrobox, which starts it in about half the time, and so does wl-clipboard, which SteamOS lacks.
-emacs is built for the host from `pkgbuilds/emacs/` or exported from the arch box, and waypipe is
-Arch Linux ARM's package, relocated or copied from that box: Homebrew's emacs is terminal-only,
-and it has no waypipe.
+emacs is built for the host from `pkgbuilds/frame/emacs/` or exported from the arch box, and
+waypipe is Arch Linux ARM's package, relocated or copied from that box: Homebrew's emacs is
+terminal-only, and it has no waypipe.
 
 `shell-init/brew.sh` runs `brew shellenv` unless Homebrew's `bin` is on `PATH` already. It goes in
 the block at the top of the rc files, so `~/.local/bin`, put on `PATH` further down, stays ahead of
@@ -312,7 +313,7 @@ what the app gets on the headset.
   without it, KRdp goes through the desktop portal, whose permission prompt shows on the PC's
   screen, and KRDC gets a blank blue screen until someone answers it there. KRdp sends KRDC the
   pointer's shape, drawn at the Frame's own pointer, so a mouse moved at the PC shows only as
-  focus changes. `pkgbuilds/krdpserver-embed-cursor/` is krdpserver from the Plasma release
+  focus changes. `pkgbuilds/pc/krdpserver-embed-cursor/` is krdpserver from the Plasma release
   pacman has, with one patch, as an Arch package beside `krdp` (`makepkg -sri` on the PC): with
   `EmbedCursor=true` in `[General]` of `~/.config/krdpserverrc`, KWin paints the PC's pointer into
   the stream and KRDC draws none, so the headset sees where the PC's mouse is (turn off KRDC's
@@ -438,7 +439,7 @@ runs inside every distrobox too. Put such checks in a `shell-init/` file instead
 ### mise
 
 `shell-init/mise.sh` runs `mise activate` for the running shell, bash or zsh, so the tools mise
-manages are on `PATH` in every shell: rust, for a Rust package in `pkgbuilds/`, and whatever
+manages are on `PATH` in every shell: rust, for a Rust package in `pkgbuilds/frame/`, and whatever
 else `mise use -g` added. It skips itself when `~/.local/bin/mise` is missing, or when mise is
 active already (`MISE_SHELL` is set), and `setup.sh` leaves an rc file alone that activates mise
 on a line of its own. `setup.sh --mise` installs mise with its own installer, one binary in
@@ -609,15 +610,15 @@ private D-Bus (`dbus-run-session`), where startplasma's import of it fails.
 
 The Frame's image carries makepkg, gcc, meson, cmake and the headers of its libraries, so a
 package can be built on the host itself, against the exact libraries it will run with, with no
-distrobox and no cross toolchain. `pkgbuilds/` holds PKGBUILDs configured with
+distrobox and no cross toolchain. `pkgbuilds/frame/` holds PKGBUILDs configured with
 `--prefix=$HOME/.local`, so the result finds its data under `~/.local` instead of the read-only
-`/usr`. `pkgbuilds/emacs/` is Emacs with PGTK, a host build that sees the Frame's own `/usr`,
+`/usr`. `pkgbuilds/frame/emacs/` is Emacs with PGTK, a host build that sees the Frame's own `/usr`,
 D-Bus and processes, which the distrobox one does not; `setup.sh --emacs` (or `--packages`)
 builds and installs it, and `--emacs=box` is the distrobox alternative. The header of each
 PKGBUILD says what it leaves out and why.
 
 ```bash
-cd ~/steam-frame-utils/pkgbuilds/emacs && makepkg -f
+cd ~/steam-frame-utils/pkgbuilds/frame/emacs && makepkg -f
 ```
 
 ```bash
@@ -629,23 +630,24 @@ what the build left: `src/`, `pkg/`, the package and the downloaded sources, abo
 for emacs, listed with their size before the question (`--clean` deletes unasked, `--keep` asks
 nothing; homeify's `PKGBUILD.upstream` is kept either way). Keep them while a PKGBUILD is being
 adjusted, since `makepkg -R` repackages from them in seconds. `setup.sh --packages` builds every
-directory under `pkgbuilds/` that `pacman-home` doesn't have at the PKGBUILD's version, in
+directory under `pkgbuilds/frame/` that `pacman-home` doesn't have at the PKGBUILD's version, in
 dependency order; a re-run builds nothing, and after a SteamOS update it rebuilds what you bump.
-It skips a PKGBUILD whose `arch` leaves out the Frame's, or that sets `_pc_only=1`:
-`pkgbuilds/krdpserver-embed-cursor/` and `pkgbuilds/frame-control-bin/` are for the PC (see
-[Apps](#apps) and the table above).
+`pkgbuilds/pc/` is the other kind, ordinary `/usr` packages for an Arch PC, which nothing here
+builds or offers: `krdpserver-embed-cursor` and `frame-control-bin` (see [Apps](#apps) and the
+table above).
 
-Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
+Any package whose build takes a prefix can be set up the same way. `pkgbuilds/frame/homeify NAME`
 fetches Arch's PKGBUILD for NAME, or the AUR's when Arch has none, rewrites it for the prefix (the
 configure, cmake, meson and make prefix flags, `/usr` under `$pkgdir`, `aarch64` in `arch`, the
-rpath and pkg-config path for `~/.local/lib`, and for a Rust package the rpath in `RUSTFLAGS`
-too), unlists the `makedepends` that mise provides, such as cargo, since makepkg checks them
-against the host's packages, prints the diff, and says which `makedepends` the host lacks.
-Review it, then `makepkg -f` and `pacman-home -U`; paru's PKGBUILD was homeify's output with no
-hand edit, while it was here ([docs/paru.md](docs/paru.md)). The rewrite is the mechanical part: a build system that hardcodes `/usr` shows up
-afterwards as a file outside `~/.local`, which `pacman-home check PKG` lists and `pacman-home -U`
-refuses, and is fixed in the PKGBUILD by hand, as `pkgbuilds/pacman/` and `pkgbuilds/emacs/`
-were, for features the host lacks and a layout that keeps out of the host's way.
+rpath and pkg-config path for `~/.local/lib`, and for a Rust package the rpath in `RUSTFLAGS` too),
+unlists the `makedepends` that mise provides, such as cargo, since makepkg checks them against the
+host's packages, prints the diff, and says which `makedepends` the host lacks. Review it, then
+`makepkg -f` and `pacman-home -U`; paru's PKGBUILD was homeify's output with no hand edit, while it
+was here ([docs/paru.md](docs/paru.md)). The rewrite is the mechanical part: a build system that
+hardcodes `/usr` shows up afterwards as a file outside `~/.local`, which `pacman-home check PKG`
+lists and `pacman-home -U` refuses, and is fixed in the PKGBUILD by hand, as
+`pkgbuilds/frame/pacman/` and `pkgbuilds/frame/emacs/` were, for features the host lacks and a
+layout that keeps out of the host's way.
 
 A program that needs no file outside its own tree, such as waypipe, needn't be built at all.
 `pacman-home relocate NAME` fetches Arch Linux ARM's binary package through pacman's own
@@ -679,7 +681,7 @@ are taken on the mirror's word, as every pacman does.
    `/usr` at run time, which installs cleanly and then fails or falls back to defaults. So the
    test is both: relocate accepts it, and the program works. waypipe passed; anything with data
    files, plugins, schemas or Python modules is likely to fail the second part.
-2. **`pkgbuilds/homeify NAME`, then `makepkg -f` and `pacman-home -U`.** Often the whole job
+2. **`pkgbuilds/frame/homeify NAME`, then `makepkg -f` and `pacman-home -U`.** Often the whole job
    too: jq and paru (while it was here) built from homeify's output as it came.
 3. **Edit the PKGBUILD where two signals say so.** homeify's closing list of `makedepends` the
    host lacks is where emacs's libgccjit and tree-sitter showed up, and became features turned
@@ -704,18 +706,18 @@ a package's dependencies are checked against the host's database and passed as
 `-R` work as usual within that database.
 
 `pacman-home outdated` compares every installed package, by version, with Arch Linux ARM's
-repositories, with the AUR for one they lack, and with its PKGBUILD in `pkgbuilds/`, so a
-bump upstream shows up without a build. The release number after the dash is this repo's own and
+repositories, with the AUR for one they lack, and with its PKGBUILD in `pkgbuilds/frame/`, so
+a bump upstream shows up without a build. The release number after the dash is this repo's own and
 isn't compared; a packaging that tracks git, as Arch's pacman does, is marked as a snapshot.
 
-The pacman it runs is the host's until `pkgbuilds/pacman/` is installed. That is pacman 7 built
-for the prefix, with its programs under `~/.local/lib/pacman/bin` so that `pacman` on `PATH` keeps
-meaning the host's, and with `~/.local/etc/pacman.conf` and `~/.local/var/lib/pacman` as its
-compiled-in defaults, so run by its path it reads the home database with no `--config`. Its
-libalpm is current, libalpm.so.16 where the host's pacman 6.1 carries .so.14, for anything built
-against libalpm. It also skips the ldconfig run that the host's pacman attempts after every
-transaction and that fails on the read-only root. `pacman-home` switches to it as soon as it is
-installed and still looks host packages up with the host's.
+The pacman it runs is the host's until `pkgbuilds/frame/pacman/` is installed. That is pacman 7
+built for the prefix, with its programs under `~/.local/lib/pacman/bin` so that `pacman` on `PATH`
+keeps meaning the host's, and with `~/.local/etc/pacman.conf` and `~/.local/var/lib/pacman` as its
+compiled-in defaults, so run by its path it reads the home database with no `--config`. Its libalpm
+is current, libalpm.so.16 where the host's pacman 6.1 carries .so.14, for anything built against
+libalpm. It also skips the ldconfig run that the host's pacman attempts after every transaction and
+that fails on the read-only root. `pacman-home` switches to it as soon as it is installed and still
+looks host packages up with the host's.
 
 After a SteamOS update, `ldd ~/.local/bin/emacs | grep "not found"` says whether a host library
 moved from under a build; the fix is a rebuild and `pacman-home -U` again.

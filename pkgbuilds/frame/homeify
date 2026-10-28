@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# steam-frame-utils: a stock Arch PKGBUILD rewritten for a ~/.local prefix, into pkgbuilds/NAME/.
+# steam-frame-utils: a stock Arch PKGBUILD rewritten for a ~/.local prefix, into pkgbuilds/frame/NAME/.
 #
-# Usage:  pkgbuilds/homeify NAME          Arch's PKGBUILD for NAME, from gitlab.archlinux.org, or
+# Usage:  pkgbuilds/frame/homeify NAME    Arch's PKGBUILD for NAME, from gitlab.archlinux.org, or
 #                                         the AUR's when Arch has none, with the files it lists
 #                                         alongside (patches, units)
-#         pkgbuilds/homeify NAME FILE     a PKGBUILD you already have
+#         pkgbuilds/frame/homeify NAME FILE  a PKGBUILD you already have
 #
 # The original is kept as PKGBUILD.upstream and the diff printed. The rewrite: the prefix given
 # to configure, cmake, meson (arch-meson too) and make, with sysconfdir and localstatedir under it;
@@ -21,7 +21,7 @@
 # shows up afterwards as a file outside ~/.local, which `pacman-home check` lists and `pacman-home
 # -U` refuses; fix that in the PKGBUILD by hand. A program that looks under /usr at run time
 # shows up only when it runs. Then:
-#   cd pkgbuilds/NAME && makepkg -f && pacman-home -U NAME-*.pkg.tar.zst
+#   cd pkgbuilds/frame/NAME && makepkg -f && pacman-home -U NAME-*.pkg.tar.zst
 
 set -euo pipefail
 
@@ -94,7 +94,7 @@ fi
 
 {
   cat <<HEADER
-# Rewritten for a \$HOME/.local prefix by steam-frame-utils' pkgbuilds/homeify on $(date +%F), from
+# Rewritten for a \$HOME/.local prefix by steam-frame-utils' pkgbuilds/frame/homeify on $(date +%F), from
 #   $from
 # The original is PKGBUILD.upstream. Built on the Frame host with makepkg and installed with
 # pacman-home; see README.md#packages-for-the-host.
@@ -144,7 +144,7 @@ missing=$(bash -c 'source "$1" >/dev/null 2>&1
 if [[ -z $missing ]]; then
   echo "   every makedepends and depends is installed"
 else
-  echo "   not installed, so the build needs them first, from pkgbuilds/ or dropped:"
+  echo "   not installed, so the build needs them first, from pkgbuilds/frame/ or dropped:"
   echo "$missing" | sed 's/^/     /'
 fi
 echo "   next: cd ${dir//$HOME/\~} && makepkg -f && pacman-home -U $name-*.pkg.tar.zst"

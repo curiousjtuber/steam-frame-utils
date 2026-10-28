@@ -21,7 +21,7 @@ from the same tool.
   install path too. Verified on the PC and the Frame.
 - **A current libalpm was needed, and was worth having anyway.** paru 2.1 links libalpm.so.16;
   the host's pacman 6.1 has .so.14, and the last paru release linking .so.14 was eighteen months
-  old. That is what brought `pkgbuilds/pacman`: pacman 7 built for the prefix, whose compiled-in
+  old. That is what brought `pkgbuilds/frame/pacman`: pacman 7 built for the prefix, whose compiled-in
   defaults are pacman-home's paths, which skips the ldconfig run that fails on the read-only
   root, and which reads no system hooks. pacman-home runs it now, and it stays.
 - **The two homeify rules for Rust** came from paru's PKGBUILD: the rpath in `RUSTFLAGS`, since
@@ -54,7 +54,7 @@ case in pacman-home. Not a trade worth keeping.
 
 ## If it comes back
 
-Everything needed is recorded: `pkgbuilds/homeify paru` regenerates the PKGBUILD from the AUR
+Everything needed is recorded: `pkgbuilds/frame/homeify paru` regenerates the PKGBUILD from the AUR
 with no hand edit; `setup.sh --mise` provides cargo; the three config lines are `PacmanConf =
 ~/.local/etc/pacman.conf` (absolute), `Sudo = fakeroot` and `Pacman = <path to pacman-home>`
 under `[bin]`; and pacman-home needs its fakeroot skipped when `FAKEROOTKEY` is already set.

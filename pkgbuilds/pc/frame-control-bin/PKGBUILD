@@ -1,7 +1,7 @@
 # Maintainer: CuriousJ <curious.j.tuber@gmail.com>
 # Frame Control (https://github.com/saphid/frame-control), the PC-side app for the Steam Frame,
 # as an Arch package for the x86_64 or aarch64 PC: not for the Frame, which is what it manages,
-# so _pc_only keeps setup.sh from offering it there.
+# which is why it lives under pkgbuilds/pc/, where setup.sh never looks.
 #
 # A -bin package that repackages the .deb each release's workflow publishes, so what pacman
 # installs is byte for byte the tested release, checked against the sha256 from its SHA256SUMS.
@@ -23,7 +23,6 @@ pkgdesc="Manage a Valve Steam Frame over SSH: headset view, games, Android apps,
 arch=('x86_64' 'aarch64')
 url="https://github.com/saphid/frame-control"
 license=('MIT')
-_pc_only=1
 # Direct NEEDED entries of the bundled Electron binary (readelf -d), the ssh client the app runs
 # for every headset connection, and xdg-open for links.
 depends=('alsa-lib' 'at-spi2-core' 'cairo' 'dbus' 'expat' 'gcc-libs' 'glib2'

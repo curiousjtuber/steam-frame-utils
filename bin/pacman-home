@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# steam-frame-utils: pacman for packages that live under ~/.local: the ones built from pkgbuilds/,
+# steam-frame-utils: pacman for packages that live under ~/.local: the ones built from pkgbuilds/frame/,
 # and stock binary packages relocated there. Its database, cache and log live under ~/.local too,
 # so the Frame's read-only root is never touched and no root is needed. Details:
 # https://github.com/curiousjtuber/steam-frame-utils#packages-for-the-host
 #
-# Usage:  pacman-home -U PKG.pkg.tar.zst       install or upgrade a package built from pkgbuilds/
+# Usage:  pacman-home -U PKG.pkg.tar.zst       install or upgrade a package built from pkgbuilds/frame/
 #         pacman-home -Q [-l PKG | -o FILE]     what is installed, a package's files, a file's owner
 #         pacman-home -R PKG                    remove one
 #         pacman-home check PKG...              which of a package's files fall outside ~/.local
 #                                               (-U refuses such a package)
 #         pacman-home outdated                  every installed package against Arch Linux ARM's
 #                                               repositories, or the AUR for one they lack, and
-#                                               against its PKGBUILD in pkgbuilds/, by version
+#                                               against its PKGBUILD in pkgbuilds/frame/, by version
 #                                               (the release number after the dash is this
 #                                               repo's own, so it isn't compared)
 #         pacman-home relocate NAME|FILE [--allow-missing-libs] [-U options]
@@ -35,7 +35,7 @@
 # that adds Arch Linux ARM's repositories; the plain one has none, so that -U never pulls a /usr
 # package from them to satisfy a dependency.
 #
-# The pacman run is the host's until pkgbuilds/pacman is installed; then it is that one, under
+# The pacman run is the host's until pkgbuilds/frame/pacman is installed; then it is that one, under
 # ~/.local/lib/pacman/bin, whose compiled-in defaults are these very paths (so it needs no
 # --config when run by hand), which skips the ldconfig run that fails on the read-only
 # root, and whose libalpm is current. Host packages are always looked up with the host's pacman.
@@ -60,7 +60,7 @@
 # install scriptlet, points absolute symlinks into /usr at ~/.local, and refuses a package whose
 # libraries the host cannot supply, a glibc or Qt newer than the host's among them. What it cannot
 # see is a program that looks for its data under /usr at run time; that one needs a build from
-# pkgbuilds/ instead.
+# pkgbuilds/frame/ instead.
 
 set -euo pipefail
 
@@ -279,7 +279,7 @@ relocate_pkg() {
     [[ -e $top ]] || continue
     [[ ${top##*/} == usr ]] \
       || die "${pkg##*/} has files under /${top##*/}, which have no place under ~/.local;" \
-        "it needs a build from pkgbuilds/ instead"
+        "it needs a build from pkgbuilds/frame/ instead"
   done
   [[ -d $tmp/usr ]] || die "${pkg##*/} has no files under /usr"
   bad=$(cd "$tmp" && ls -d usr/lib/systemd usr/lib/udev usr/lib/sysusers.d usr/lib/tmpfiles.d \
@@ -332,7 +332,7 @@ relocate_pkg() {
 outdated_cmd() {
   local vercmp pkgbuilds name have up src pb newer
   vercmp=$(dirname "$PACMAN")/vercmp
-  pkgbuilds=$(cd "$(dirname "$0")/../pkgbuilds" 2>/dev/null && pwd || true)
+  pkgbuilds=$(cd "$(dirname "$0")/../pkgbuilds/frame" 2>/dev/null && pwd || true)
   sync_alarm
   printf '%-14s %-12s %-12s %s\n' package installed pkgbuild upstream
   while read -r name have; do

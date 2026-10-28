@@ -4,9 +4,9 @@
 .\#*
 
 # makepkg, run in a pkgbuilds/ directory
-pkgbuilds/*/src/
-pkgbuilds/*/pkg/
-pkgbuilds/*/*.pkg.tar.*
-pkgbuilds/*/*.tar.xz
-pkgbuilds/*/*.deb
-pkgbuilds/*/*.tar.xz.sig
+pkgbuilds/*/*/src/
+pkgbuilds/*/*/pkg/
+pkgbuilds/*/*/*.pkg.tar.*
+pkgbuilds/*/*/*.tar.xz
+pkgbuilds/*/*/*.deb
+pkgbuilds/*/*/*.tar.xz.sig

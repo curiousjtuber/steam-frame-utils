@@ -1,5 +1,5 @@
 # steam-frame-utils: mise activated, so the tools it manages are on PATH: rust,
-# which a Rust package in pkgbuilds/ needs for cargo, and whatever else `mise use -g`
+# which a Rust package in pkgbuilds/frame/ needs for cargo, and whatever else `mise use -g`
 # added. Skipped when mise isn't installed or is activated already (mise sets
 # MISE_SHELL). Sourced from the block setup.sh --mise puts at the end of
 # ~/.bashrc and ~/.zshrc. Details:

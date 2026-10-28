@@ -9,7 +9,7 @@ and the nearest source of aarch64 binaries for SteamOS.
 
 | What | Root of trust | What's checked | Where it runs |
 |---|---|---|---|
-| `pkgbuilds/` (`--packages`, `--emacs=host`) | gnu.org and gitlab.archlinux.org release tarballs, your review of the PKGBUILD | BLAKE2 sums in the PKGBUILD, by makepkg | built on the host, under `~/.local`, no root |
+| `pkgbuilds/frame/` (`--packages`, `--emacs=host`) | gnu.org and gitlab.archlinux.org release tarballs, your review of the PKGBUILD | BLAKE2 sums in the PKGBUILD, by makepkg | built on the host, under `~/.local`, no root |
 | waypipe for the host (`--waypipe=host`) | ALARM's Build System key, pinned by fingerprint in `pacman-home` | the package's PGP signature, by pacman; the keyring package itself once, against the pinned fingerprint | a binary under `~/.local/bin` |
 | Tailscale (`install-tailscale.sh`) | pkgs.tailscale.com, Tailscale | the tarball against the `.sha256` beside it | root: a system daemon |
 | Nerd Fonts (`install-nerd-fonts.sh`) | GitHub's TLS, the nerd-fonts project | the archive against the release's `SHA-256.txt` | fonts under `~/.local/share/fonts`, data not code |

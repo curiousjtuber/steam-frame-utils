@@ -1,6 +1,7 @@
 # krdpserver with an EmbedCursor option, as a package beside the distro's krdp, for the x86_64
 # Arch or CachyOS PC that serves its desktop to KRDC on the Frame. Not for the Frame: the
-# Frame's server is the flatpak apps/install-krdp.sh builds, and setup.sh skips this directory.
+# Frame's server is the flatpak apps/install-krdp.sh builds, and setup.sh never looks under
+# pkgbuilds/pc/.
 #
 # krdp sends a viewer the pointer's shape, which the viewer draws at its own pointer, so moving
 # the mouse at the PC shows in the stream as focus changes with no pointer. With EmbedCursor=true

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# steam-frame-utils: build the package in the current directory, or a named one under pkgbuilds/,
+# steam-frame-utils: build the package in the current directory, or a named one under pkgbuilds/frame/,
 # and install it with pacman-home; then offer to delete what the build left behind. Details:
 # https://github.com/curiousjtuber/steam-frame-utils#packages-for-the-host
 #
@@ -43,10 +43,10 @@ if [[ -z $target ]]; then
   dir=$PWD
 elif [[ -d $target ]]; then
   dir=$(cd "$target" && pwd)
-elif [[ -d $SRC/pkgbuilds/$target ]]; then
-  dir=$SRC/pkgbuilds/$target
+elif [[ -d $SRC/pkgbuilds/frame/$target ]]; then
+  dir=$SRC/pkgbuilds/frame/$target
 else
-  die "no directory $target, and no pkgbuilds/$target (have: $(ls "$SRC/pkgbuilds" | grep -v homeify | tr '\n' ' '))"
+  die "no directory $target, and no pkgbuilds/frame/$target (have: $(ls -d "$SRC"/pkgbuilds/frame/*/ | xargs -n1 basename | tr '\n' ' '))"
 fi
 [[ -f $dir/PKGBUILD ]] || die "no PKGBUILD in ${dir/#$HOME/\~}"
 [[ -x $PACMAN_HOME ]] || die "$PACMAN_HOME is missing"
