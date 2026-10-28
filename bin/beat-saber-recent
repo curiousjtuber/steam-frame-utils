@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# steam-frame-utils: the songs Beat Saber played in its last two launches, in order, from Unity's
+# Player.log and Player-prev.log in the game's Proton prefix.
+#
+# Usage:  beat-saber-recent
+#
+# Beat Saber writes a timestamped line when a level starts. Unity keeps only two logs, the
+# running launch's and the one before, so this is as far back as it goes; PlayerData.dat has the
+# play counts for every song but no dates. A line means the song started, not that it was
+# finished. Custom maps are shown by their name, with (custom); Valve's and Beat Games' own by
+# their level id, which is the title without spaces.
+
+set -euo pipefail
+
+if [[ -n ${CONTAINER_ID:-} || -e /run/.containerenv ]]; then
+  exec distrobox-host-exec "$0" "$@"
+fi
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+die() { echo "beat-saber-recent: $*" >&2; exit 1; }
+
+case ${1:-} in
+  '') ;;
+  -h|--help) usage; exit 0 ;;
+  *) die "unknown argument: $1" ;;
+esac
+
+DIR=$HOME/.local/share/Steam/steamapps/compatdata/620980/pfx/drive_c/users/steamuser/AppData/LocalLow/Hyperbolic\ Magnetism/Beat\ Saber
+[[ -d $DIR ]] || die "no Beat Saber data at $DIR"
+
+first=1
+for log in "$DIR/Player-prev.log" "$DIR/Player.log"; do
+  [[ -f $log ]] || continue
+  (( first )) || echo
+  first=0
+  # [2026-10-28T18:13:43] custom_level_32dff (Queencard - eurnkung) [BeatmapLevel: -1/...]
+  # [2026-10-28T18:16:57] Overkill [BeatmapLevel: 0/BeatmapLevelData: 1]
+  sed -nE 's/^\[([0-9]{4}-[0-9]{2}-[0-9]{2})T([0-9]{2}:[0-9]{2}):[0-9]{2}\] (.*) \[BeatmapLevel:.*$/\1 \2  \3/p' "$log" \
+    | sed -E 's/custom_level_[0-9a-f]+ \((.*)\)$/\1 (custom)/' \
+    | sort -s -k1,2 \
+    | { read -r line || { echo "no songs in ${log##*/}"; exit 0; }
+        echo "Session of ${line:0:10}  (${log##*/})"
+        printf '%s\n' "$line"; cat; }
+done
