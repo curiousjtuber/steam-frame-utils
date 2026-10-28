@@ -24,7 +24,7 @@ Clone it on the Frame as `~/steam-frame-utils`; the paths below assume that loca
 | `bin/beat-saber-recent` | the songs Beat Saber started in its last two launches, in order, from the Unity logs in its Proton prefix; Unity keeps only two, so that is the reach, and `PlayerData.dat` has play counts but no dates |
 | `distrobox/distroboxrc` | makes distrobox find `bin/podman` whatever the caller's `PATH` (same section) |
 | `environment.d/` | shows the mouse cursor in Desktop Mode on SteamOS below 0.5.6; `setup.sh` installs it there and removes it from 0.5.6 on, where the stock desktop draws it itself and Frametop's session sets the variable for its own (see [Mouse cursor in Desktop Mode](#mouse-cursor-in-desktop-mode)) |
-| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)); and one for the PC instead, `pkgbuilds/krdpserver-embed-cursor/`, a krdpserver that can paint the PC's own pointer into the stream (see [Apps](#apps)) |
+| `pkgbuilds/` | PKGBUILDs for the Frame host itself, built with makepkg on the Frame for a `~/.local` prefix: `pkgbuilds/emacs/` is Emacs with PGTK, `pkgbuilds/pacman/` pacman 7 with a current libalpm, and `pkgbuilds/homeify` rewrites a stock Arch PKGBUILD into one (see [Packages for the host](#packages-for-the-host)); and two for the PC instead: `pkgbuilds/krdpserver-embed-cursor/`, a krdpserver that can paint the PC's own pointer into the stream (see [Apps](#apps)), and `pkgbuilds/frame-control-bin/`, [Frame Control](https://github.com/saphid/frame-control) as an Arch package built from its release `.deb` (`makepkg -si` on the PC; the PKGBUILD's header says what it changes) |
 | `bin/pacman-home` | pacman for packages under `~/.local`, with its database there and no root: the ones built from `pkgbuilds/`, and stock binary packages it relocates (same section) |
 | `bin/makepkg-home` | builds one of `pkgbuilds/`, installs it with `pacman-home`, and offers to delete the build's leftovers (same section) |
 | `docs/` | memos on the surrounding ground: [Arch-based distrobox images for arm64](docs/arch-distrobox-images.md); [the proximity sensor](docs/proximity-sensor.md), on the `frame-prox` tool that SteamOS 0.4.4 made redundant and how its undocumented settings were found; [the desktop cursor](docs/desktop-cursor.md), what SteamOS 0.5.6 changed for the two cursor fixes and how to re-check on the next one; [packages under `~/.local`](docs/home-packages.md), what each one took to get there; [paru](docs/paru.md), tried on the home database and dropped; [the screen reader](docs/orca-screen-reader.md), the command that silences Orca's "dummy output module" message and why Steam restarts it at every boot; and [trust](docs/TRUST.md), what `setup.sh` fetches and who is trusted at the root (the apps have [apps/TRUST.md](apps/TRUST.md)) |
@@ -631,8 +631,9 @@ nothing; homeify's `PKGBUILD.upstream` is kept either way). Keep them while a PK
 adjusted, since `makepkg -R` repackages from them in seconds. `setup.sh --packages` builds every
 directory under `pkgbuilds/` that `pacman-home` doesn't have at the PKGBUILD's version, in
 dependency order; a re-run builds nothing, and after a SteamOS update it rebuilds what you bump.
-It skips a PKGBUILD whose `arch` leaves out the Frame's: `pkgbuilds/krdpserver-embed-cursor/` is
-for the PC (see [Apps](#apps)).
+It skips a PKGBUILD whose `arch` leaves out the Frame's, or that sets `_pc_only=1`:
+`pkgbuilds/krdpserver-embed-cursor/` and `pkgbuilds/frame-control-bin/` are for the PC (see
+[Apps](#apps) and the table above).
 
 Any package whose build takes a prefix can be set up the same way. `pkgbuilds/homeify NAME`
 fetches Arch's PKGBUILD for NAME, or the AUR's when Arch has none, rewrites it for the prefix (the

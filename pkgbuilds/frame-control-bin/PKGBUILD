@@ -1,0 +1,67 @@
+# Maintainer: CuriousJ <curious.j.tuber@gmail.com>
+# Frame Control (https://github.com/saphid/frame-control), the PC-side app for the Steam Frame,
+# as an Arch package for the x86_64 or aarch64 PC: not for the Frame, which is what it manages,
+# so _pc_only keeps setup.sh from offering it there.
+#
+# A -bin package that repackages the .deb each release's workflow publishes, so what pacman
+# installs is byte for byte the tested release, checked against the sha256 from its SHA256SUMS.
+# The app bundles Electron, Python and adb; ssh comes from the host, as on every platform, and
+# so do the optional rsync, avahi-browse and ffprobe. Its own updater sees a package install and
+# only announces a release; updating is bumping pkgver and the two sums here, then makepkg.
+#
+# /opt/frame-control, not the .deb's "/opt/Frame Control": no space in the path, and the
+# desktop entry's Exec is rewritten to the /usr/bin link. chrome-sandbox stays 0755: the .deb's
+# postinst only makes it SUID where unprivileged user namespaces are off, and Arch has them on.
+#
+# Build and install on the PC:
+#   makepkg -si
+
+pkgname=frame-control-bin
+pkgver=0.4.53
+pkgrel=1
+pkgdesc="Manage a Valve Steam Frame over SSH: headset view, games, Android apps, files and status"
+arch=('x86_64' 'aarch64')
+url="https://github.com/saphid/frame-control"
+license=('MIT')
+_pc_only=1
+# Direct NEEDED entries of the bundled Electron binary (readelf -d), the ssh client the app runs
+# for every headset connection, and xdg-open for links.
+depends=('alsa-lib' 'at-spi2-core' 'cairo' 'dbus' 'expat' 'gcc-libs' 'glib2'
+         'glibc' 'gtk3' 'hicolor-icon-theme' 'libcups' 'libx11' 'libxcb'
+         'libxcomposite' 'libxdamage' 'libxext' 'libxfixes' 'libxkbcommon'
+         'libxrandr' 'mesa' 'nspr' 'nss' 'openssh' 'pango' 'systemd-libs'
+         'xdg-utils')
+optdepends=('rsync: faster file and game transfers to the headset'
+            'avahi: find the headset on the local network by mDNS'
+            'ffmpeg: ffprobe for the media player'
+            'libappindicator-gtk3: tray icon when Frame Control starts at login')
+provides=('frame-control')
+conflicts=('frame-control')
+options=('!strip')
+_release="$url/releases/download/v$pkgver"
+source_x86_64=("$pkgname-$pkgver-x86_64.deb::$_release/Frame-Control-linux-amd64.deb")
+source_aarch64=("$pkgname-$pkgver-aarch64.deb::$_release/Frame-Control-linux-arm64.deb")
+# From the release's SHA256SUMS.
+sha256sums_x86_64=('2adbef7c1bec3e9e40244984598a2e2c9816eb2c21fdb21d6996f9d30f2d0fec')
+sha256sums_aarch64=('0625dfdb1959f8eab52ac3f6c4bf909b7de3966c9ca959c391e43630516ff9c7')
+
+prepare() {
+  bsdtar -xf "$pkgname-$pkgver-$CARCH.deb" data.tar.xz
+}
+
+package() {
+  bsdtar -xf data.tar.xz -C "$srcdir" ./opt ./usr/share/applications ./usr/share/icons
+  install -d "$pkgdir/opt" "$pkgdir/usr/bin"
+  cp -a "$srcdir/opt/Frame Control" "$pkgdir/opt/frame-control"
+  ln -s /opt/frame-control/frame-control "$pkgdir/usr/bin/frame-control"
+
+  install -Dm644 "$srcdir/usr/share/applications/frame-control.desktop" \
+    -t "$pkgdir/usr/share/applications"
+  sed -i 's|^Exec=.*|Exec=frame-control %U|' "$pkgdir/usr/share/applications/frame-control.desktop"
+  install -Dm644 "$srcdir/usr/share/icons/hicolor/1024x1024/apps/frame-control.png" \
+    -t "$pkgdir/usr/share/icons/hicolor/1024x1024/apps"
+  install -Dm644 "$pkgdir/opt/frame-control/resources/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$pkgdir/opt/frame-control/resources/THIRD_PARTY_NOTICES.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
+}

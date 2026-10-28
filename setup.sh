@@ -737,7 +737,8 @@ fi
 # README.md#packages-for-the-host). pacman-home's database says what is installed, at which
 # version; a package missing or at another version is built with makepkg and installed with
 # pacman-home -U. Dependencies between the packages decide the order. A PKGBUILD whose arch
-# leaves out the Frame's (pkgbuilds/krdpserver-embed-cursor, for the PC) is not a host package.
+# leaves out the Frame's (pkgbuilds/krdpserver-embed-cursor, for the PC), or that sets
+# _pc_only=1 (pkgbuilds/frame-control-bin, for an x86_64 or aarch64 PC), is not a host package.
 
 # pkgbuild_info DIR -- "name ver-rel dep dep..." from the PKGBUILD, read the way makepkg does
 pkgbuild_info() {
@@ -746,9 +747,11 @@ pkgbuild_info() {
     for d in "${depends[@]}"; do printf " %s" "${d%%[<>=]*}"; done; echo' _ "$1"
 }
 
-# pkgbuild_for_host DIR -- true when the PKGBUILD's arch includes the Frame's: aarch64, or any
+# pkgbuild_for_host DIR -- true when the PKGBUILD's arch includes the Frame's, aarch64 or any,
+# and it doesn't declare itself a PC package with _pc_only=1
 pkgbuild_for_host() {
   bash -c 'source "$1/PKGBUILD" >/dev/null 2>&1 || exit 1
+    [[ ${_pc_only:-0} == 1 ]] && exit 1
     for a in "${arch[@]}"; do [[ $a == aarch64 || $a == any ]] && exit 0; done; exit 1' _ "$1"
 }
 
