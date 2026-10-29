@@ -10,7 +10,19 @@
 # use. krdp's own desktop file lists them, so it's renamed to this app id and exported. No
 # permission bypass in KWin is needed, so the stock desktop works as well as Frametop's.
 #
-# Pinned here on purpose (verified 2026-10-29):
+# NOT FOR THE FRAME YET (2026-10-29). krdp 6.8's --plasma session asks KWin for version 6 of
+# zkde_screencast_unstable_v1 (the serial event; KWin 6.7 is the first to offer it) and quits
+# when the compositor has less, and it sends input through KWin's org.kde.KWin.EIS.RemoteDesktop
+# D-Bus interface instead of the fake-input protocol. SteamOS's KWin is 6.2.5 (version 3 of the
+# screencast protocol), and both Frametop's desktop and the stock one are that KWin nested, so
+# this build cannot stream them. Its EIS interface exists in 6.2.5, but on the nested session's
+# own bus, which the sandbox isn't given. To run this on the Frame: patch screencasting.cpp to
+# ask for ZKDE_SCREENCAST_UNSTABLE_V1_STREAM_REGION_SINCE_VERSION (the created event still sets
+# the node id), give the sandbox that session bus (--socket=session-bus, with bin/krdpd passing
+# the nested DBUS_SESSION_BUS_ADDRESS), and test input end to end. Or wait for a SteamOS with
+# KWin 6.7 or later. The dev branch stays on krdp 6.7.5 with 6.8's NLA patch meanwhile.
+#
+# Pinned here on purpose (as far as building goes, 2026-10-29):
 # - krdp 6.8.2 and kpipewire 6.8.2, unpatched. Plasma 6.8 is the first with what the Frame
 #   needed from this app: NLA logins against a SAM file of the users it's given, with FreeRDP
 #   3.32's extended security off (6.7.5 compared the password in onPostConnect, which FreeRDP
@@ -18,6 +30,8 @@
 #   and kpipewire's cursor copy sized by stride * height, not four times that (6.7.5 read past
 #   the cursor bitmap and segfaulted on the 256 px cursor SteamOS's gamescope sets; upstream
 #   https://invent.kde.org/plasma/kpipewire/-/merge_requests/285).
+# - plasma-wayland-protocols 1.23.0: krdp 6.8 needs the screencast protocol's serial event,
+#   which 1.21.0 added.
 # - libei 1.6.0: krdp 6.8 links libei for its portal session (EiConnection), unconditionally,
 #   and the KDE 6.11 runtime has no libei. Only libei.so is built: --plasma never opens an EIS
 #   connection, and liboeffis would pull in the portal plumbing for nothing. Its protocol code
@@ -51,8 +65,8 @@ modules:
     builddir: true
     sources:
       - type: archive
-        url: https://download.kde.org/stable/plasma-wayland-protocols/plasma-wayland-protocols-1.19.0.tar.xz
-        sha256: 45679fe7a63c414f2c81793a62528fae6ccee584b6965719d7f9fc6dd48ba846
+        url: https://download.kde.org/stable/plasma-wayland-protocols/plasma-wayland-protocols-1.23.0.tar.xz
+        sha256: 16c5ad917bde2ed795942dacba76654819ddc6a1566842325ef34e0b553ef138
 
   - name: freerdp
     buildsystem: cmake-ninja
