@@ -287,24 +287,28 @@ what the app gets on the headset.
 
 | Script | App | Where it goes |
 |---|---|---|
-| `install-stream-frame.sh [--yes]` | [Stream Frame](https://streamframe.app), for watching, recording and screenshotting the headset from another device | Flatpak `com.boxtree.StreamFrame`, system-wide, from Boxtree's repo; uses sudo |
-| `install-moonlight.sh [--yes]` | [Moonlight](https://moonlight-stream.org), for streaming games from a Sunshine or GeForce Experience host | Flatpak `com.moonlight_stream.Moonlight`, system-wide, from Flathub; uses sudo |
-| `install-krdc.sh [--yes]` | [KRDC](https://apps.kde.org/krdc), KDE's RDP and VNC client, for a Plasma desktop shared with KRdp | Flatpak `org.kde.krdc`, system-wide, from Flathub; uses sudo |
-| `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, system-wide, from Flathub; uses sudo |
+| `install-stream-frame.sh [--yes]` | [Stream Frame](https://streamframe.app), for watching, recording and screenshotting the headset from another device | Flatpak `com.boxtree.StreamFrame`, in the user installation, from Boxtree's repo; no root |
+| `install-moonlight.sh [--yes]` | [Moonlight](https://moonlight-stream.org), for streaming games from a Sunshine or GeForce Experience host | Flatpak `com.moonlight_stream.Moonlight`, in the user installation, from Flathub; no root |
+| `install-krdc.sh [--yes]` | [KRDC](https://apps.kde.org/krdc), KDE's RDP and VNC client, for a Plasma desktop shared with KRdp | Flatpak `org.kde.krdc`, in the user installation, from Flathub; no root |
+| `install-deskflow.sh [--yes]` | [Deskflow](https://deskflow.org), keyboard and mouse sharing, so a PC's mouse and keyboard reach the Frametop desktop | Flatpak `org.deskflow.deskflow`, in the user installation, from Flathub; no root |
 | `install-bsmanager.sh` | [BSManager](https://github.com/DaVarga/bs-manager), DaVarga's arm64 fork, for Beat Saber versions, mods and maps | `~/Applications/BSManager.AppImage`, with a menu entry and the BeatSaver OneClick links |
 | `install-full-keyboard.sh [--version X.Y.Z \| --uninstall]` | [Full Keyboard](https://github.com/TaiKeid/steam-frame-full-keyboard), TaiKeid's full-size virtual keyboard for the dashboard and local apps | `~/.local/share/framekeyboard`, with the launcher `~/.local/bin/framekeyboard` and a menu entry |
 | `install-frametop.sh [--version X.Y.Z] [--yes] [--no-eye-tracker] [--no-bluetooth \| --bluetooth] [--any-steamos] [--unpack-only] \| --uninstall` | [Frametop](https://github.com/Frametop/frametop), the multi-screen Plasma desktop and 3D mouse that run on the Frame itself | `~/.local/share/frametop/releases/<version>`, with a podman image and container from the release's `Frametop.zip`, and services in the home directory; two optional parts use sudo |
 | `install-krdp.sh [--bundle [FILE] \| --uninstall]` | [KRdp](https://invent.kde.org/plasma/krdp)'s server, krdpserver, for serving a Plasma desktop on the Frame over RDP to KRDC, Remmina or Windows Remote Desktop | Flatpak `io.github.curiousjtuber.Krdp`, built here on KDE's runtime, in the user installation; no root. Run with `bin/krdpd`, or KRdp Server in the menu |
 
-- **Stream Frame** is what Discover installs from the website. Run it on the host, not in a
-  distrobox. The first install also pulls the KDE runtime from Flathub, a few hundred MB, and
-  asks first unless given `--yes`. `/var/lib/flatpak` is a bind mount into `/home/.steamos/offload`,
-  so SteamOS updates keep it. It needs ffmpeg on the headset, and SteamOS already has it in
-  `/usr/bin`.
-- **Moonlight** comes from Flathub because Ubuntu 26.04 has no `moonlight-qt` for arm64. Like
-  Stream Frame, run it on the host. The first install pulls KDE runtime 6.11, about 400 MB, and
-  asks first unless given `--yes`. The sandbox can reach gamescope, so it can also be added as a
-  non-Steam game for Game Mode.
+- **The Flatpak apps** go into the user installation, `~/.local/share/flatpak`, like Frametop
+  and krdpserver: no root and no polkit, so the scripts work over SSH, and SteamOS updates keep
+  the home directory. Each pulls its KDE runtime into the user installation too, even when a
+  system one would do, so removing system Flatpaks later can't break it. A system copy, say one
+  Discover installed, is reported: the user copy wins the menu and `flatpak run`, so remove the
+  system one with `sudo flatpak uninstall --system <app>`. Run the scripts on the host, not in a
+  distrobox.
+- **Stream Frame** is the app Discover installs from the website, from the same repo. The first
+  install also pulls the KDE runtime from Flathub, a few hundred MB, and asks first unless given
+  `--yes`. It needs ffmpeg on the headset, and SteamOS already has it in `/usr/bin`.
+- **Moonlight** comes from Flathub because Ubuntu 26.04 has no `moonlight-qt` for arm64. The
+  first install pulls KDE runtime 6.11, about 400 MB, and asks first unless given `--yes`. The
+  sandbox can reach gamescope, so it can also be added as a non-Steam game for Game Mode.
 - **KRDC** is for desktop work, Moonlight for games. KRdp, Plasma's Remote Desktop, streams every
   monitor as one picture and moves the pointer through KWin, so it lines up on a multi-monitor
   host, where Sunshine's absolute mouse spans the whole desktop but the stream shows one monitor.

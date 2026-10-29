@@ -10,16 +10,18 @@
 # For desktop work rather than games: KRdp streams the whole workspace, every monitor, and its
 # mouse input goes through KWin in the stream's coordinates, so the pointer lines up on a
 # multi-monitor host, where Sunshine's virtual absolute mouse doesn't. The Flatpak bundles
-# FreeRDP. System-wide, like Stream Frame and Moonlight, so it runs flatpak through sudo: polkit
-# would ask for the password too, but over SSH there is no agent to ask with. The Frame already
-# has the flathub system remote; it is added if missing. /var/lib/flatpak is a bind mount of
-# /home/.steamos/offload/var/lib/flatpak, so SteamOS updates keep it.
+# FreeRDP. The flathub user remote is added if missing.
+# Into the user installation (~/.local/share/flatpak), like Frametop and krdpserver: no root and
+# no polkit, so it works over SSH, and the home directory survives SteamOS updates. The KDE
+# runtime goes into the user installation too, even when a system one would do, so removing
+# system Flatpaks later can't break the app. A system copy, say one Discover installed, is
+# reported: the user copy takes precedence, so remove the system one.
 #
 # The sandbox: network and the GPU, nothing of the home directory.
 #
 # Uninstall:
-#   sudo flatpak uninstall org.kde.krdc
-#   sudo flatpak uninstall --unused     # the KDE runtime, if nothing else uses it
+#   flatpak uninstall --user org.kde.krdc
+#   flatpak uninstall --user --unused     # the KDE runtime, if nothing else uses it
 
 set -euo pipefail
 
@@ -42,18 +44,37 @@ die() { echo "install-krdc.sh: $*" >&2; exit 1; }
   || die "run it on the Frame's host, not in a distrobox: it installs a host Flatpak"
 command -v flatpak >/dev/null || die "missing required command: flatpak"
 
-if flatpak remotes --system --columns=name | grep -qxF "$REMOTE"; then
-  echo "ok             remote $REMOTE"
+add_remote() { # NAME REPO_FILE
+  if flatpak remotes --user --columns=name | grep -qxF "$1"; then
+    echo "ok             remote $1"
+  else
+    echo "add            remote $1 from $2"
+    flatpak remote-add --user --if-not-exists "$1" "$2"
+  fi
+}
+add_remote "$REMOTE" "$REPO_FILE"
+
+if flatpak info --user "$APP" >/dev/null 2>&1; then
+  echo "update         $APP"
+  flatpak update --user "${yes[@]}" "$APP"
 else
-  echo "add            remote $REMOTE from $REPO_FILE"
-  sudo flatpak remote-add --system --if-not-exists "$REMOTE" "$REPO_FILE"
+  echo "install        $APP"
+  flatpak install --user "${yes[@]}" "$REMOTE" "$APP"
+fi
+
+# A runtime in the system installation satisfies the install, so flatpak wouldn't pull it into
+# the user one; removing the system Flatpaks would then break the app.
+runtime=$(flatpak info --user --show-runtime "$APP")
+if flatpak info --user "$runtime" >/dev/null 2>&1; then
+  echo "ok             runtime $runtime"
+else
+  echo "install        runtime $runtime, into the user installation too"
+  flatpak install --user "${yes[@]}" flathub "$runtime"
 fi
 
 if flatpak info --system "$APP" >/dev/null 2>&1; then
-  echo "update         $APP"
-  sudo flatpak update --system "${yes[@]}" "$APP"
-else
-  echo "install        $APP"
-  sudo flatpak install --system "${yes[@]}" "$REMOTE" "$APP"
+  echo "note           a system copy of $APP is installed too; the user copy takes precedence"
+  echo "               in the menu and in flatpak run. To remove it:"
+  echo "               sudo flatpak uninstall --system $APP"
 fi
 echo "done: start KRDC from the menu, or run: flatpak run $APP"
