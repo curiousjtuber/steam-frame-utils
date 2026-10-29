@@ -10,15 +10,20 @@
 # use. krdp's own desktop file lists them, so it's renamed to this app id and exported. No
 # permission bypass in KWin is needed, so the stock desktop works as well as Frametop's.
 #
-# Pinned here on purpose (verified 2026-10-10):
-# - krdp 6.7.5 with krdp-nla-backport.patch: 6.7.5 has no NLA (TLS only, the password compared
-#   in onPostConnect, which FreeRDP 3.32 clients such as krdc 26.08 leave empty). The patch is
-#   krdp 6.8's three NLA commits, unchanged: logins are checked with NLA against a SAM file of
-#   the users it's given, and FreeRDP 3.32's extended security stays off (KRdp MR 248, FreeRDP
-#   issue 13567). krdp 6.8 itself needs kpipewire 6.8, libei and newer protocols; not yet.
-# - kpipewire with kpipewire-cursor-bitmap-size.patch: it copies the cursor bitmap with
-#   stride * height * 4 bytes (stride is already bytes) and segfaults on the 256 px cursor
-#   SteamOS's gamescope sets. Upstream: https://invent.kde.org/plasma/kpipewire/-/merge_requests/285
+# Pinned here on purpose (verified 2026-10-29):
+# - krdp 6.8.2 and kpipewire 6.8.2, unpatched. Plasma 6.8 is the first with what the Frame
+#   needed from this app: NLA logins against a SAM file of the users it's given, with FreeRDP
+#   3.32's extended security off (6.7.5 compared the password in onPostConnect, which FreeRDP
+#   3.32 clients such as krdc 26.08 leave empty; krdp-6.7.5-2 carried 6.8's commits as a patch),
+#   and kpipewire's cursor copy sized by stride * height, not four times that (6.7.5 read past
+#   the cursor bitmap and segfaulted on the 256 px cursor SteamOS's gamescope sets; upstream
+#   https://invent.kde.org/plasma/kpipewire/-/merge_requests/285).
+# - libei 1.6.0: krdp 6.8 links libei for its portal session (EiConnection), unconditionally,
+#   and the KDE 6.11 runtime has no libei. Only libei.so is built: --plasma never opens an EIS
+#   connection, and liboeffis would pull in the portal plumbing for nothing. Its protocol code
+#   generator needs the jinja2 Python module, which the SDK lacks, so a build-only module
+#   installs the wheel and is cleaned out of the app; markupsafe, jinja2's one dependency, the
+#   SDK has.
 app-id: io.github.curiousjtuber.Krdp
 runtime: org.kde.Platform
 runtime-version: '6.11'
@@ -92,10 +97,8 @@ modules:
       - -DBUILD_TESTING=OFF
     sources:
       - type: archive
-        url: https://download.kde.org/stable/plasma/6.7.5/kpipewire-6.7.5.tar.xz
-        sha256: 20af39d9450d495468c56a50930810d82137f7ccd3a710592e02b6f620758f55
-      - type: patch
-        path: kpipewire-cursor-bitmap-size.patch
+        url: https://download.kde.org/stable/plasma/6.8.2/kpipewire-6.8.2.tar.xz
+        sha256: 80d5bb3a95018f67f7476570ac8aad91872188cf2e6536cf81e9347b4adfefec
 
   - name: qtkeychain
     buildsystem: cmake-ninja
@@ -137,6 +140,30 @@ modules:
         url: https://github.com/linux-pam/linux-pam/releases/download/v1.7.3/Linux-PAM-1.7.3.tar.xz
         sha256: 2ce4765fd49df6693771ef2941f81e33d8ee14b94a81a5c7b369aa3b137b85a5
 
+  - name: python3-jinja2
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-deps --find-links="file://${PWD}" --prefix=${FLATPAK_DEST} jinja2
+    cleanup:
+      - '*'
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl
+        sha256: 85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
+
+  - name: libei
+    buildsystem: meson
+    config-opts:
+      - -Dlibei=enabled
+      - -Dlibeis=disabled
+      - -Dliboeffis=disabled
+      - -Dtests=disabled
+      - -Ddocumentation=[]
+    sources:
+      - type: archive
+        url: https://gitlab.freedesktop.org/libinput/libei/-/archive/1.6.0/libei-1.6.0.tar.gz
+        sha256: 81b4b967f0e5938492434a04f7ea2e6c6d96d3e6c44700bc691821f82281e602
+
   - name: krdp
     buildsystem: cmake-ninja
     builddir: true
@@ -146,7 +173,5 @@ modules:
       - -DBUILD_PLASMA_SESSION=ON
     sources:
       - type: archive
-        url: https://download.kde.org/stable/plasma/6.7.5/krdp-6.7.5.tar.xz
-        sha256: 483fb1d9ffd6954e7b12aa4321763a31726e5c0daac10e135cd13a503ced5330
-      - type: patch
-        path: krdp-nla-backport.patch
+        url: https://download.kde.org/stable/plasma/6.8.2/krdp-6.8.2.tar.xz
+        sha256: d4e651aca79f83d6da71de1b36e87d38b123fa8fcf066c2294a55a43b3675de4

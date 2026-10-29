@@ -15,8 +15,8 @@
 #
 # SteamOS has no krdp, Flathub has no krdpserver (only the KRDC client), and anything built
 # against the image's Plasma breaks at the next SteamOS update, so this builds it on KDE's
-# runtime, which brings its own Qt, KF6, ffmpeg and PipeWire; FreeRDP, kpipewire and krdp are
-# built here, with the pins and patches the manifest explains. Unlike the other apps, it goes in
+# runtime, which brings its own Qt, KF6, ffmpeg and PipeWire; FreeRDP, libei, kpipewire and krdp
+# are built here, with the pins the manifest explains. Unlike the other apps, it goes in
 # the user flatpak installation, not system-wide: flatpak-builder works without root there, and
 # the build needs the KDE 6.11 SDK (about 1 GB to download, 4 GB on disk) and org.flatpak.Builder,
 # which this installs on first use. The build itself takes about half an hour on the Frame.

@@ -360,9 +360,9 @@ what the app gets on the headset.
 - **KRdp's server** is the other direction: the Frame as the RDP host, for seeing and using a
   Plasma desktop that runs on it (Frametop's, or SteamOS's stock Desktop) from a PC. SteamOS has
   no krdp and Flathub only has the client, so `install-krdp.sh` builds it as a flatpak on KDE's
-  runtime, with its own FreeRDP and kpipewire, pinned and patched as the manifest in `apps/krdp/`
-  explains (krdp 6.7.5 gets 6.8's NLA login, which works with FreeRDP 3.32 clients; kpipewire
-  crashes on the 256 px cursor gamescope sets). The first run installs the KDE 6.11 SDK and
+  runtime, with its own FreeRDP, libei and kpipewire, pinned as the manifest in `apps/krdp/`
+  explains (krdp 6.8.2: its NLA login works with FreeRDP 3.32 clients, and its kpipewire no
+  longer crashes on the 256 px cursor gamescope sets). The first run installs the KDE 6.11 SDK and
   flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
   rebuild only what changed. KWin lets the sandboxed server capture through the app's desktop
   file, so neither desktop needs KWin's permission checks turned off. Nothing starts it by
