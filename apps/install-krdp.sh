@@ -68,7 +68,7 @@ flatpak --user install -y --noninteractive flathub "$SDK" org.flatpak.Builder//s
   org.freedesktop.Platform.openh264//2.5.1 2>&1 | grep -vE '^\s*$|is already installed' || true
 
 mkdir -p "$state"
-stamp=$(cat "$manifest" "$here"/krdp/*.patch | sha256sum | cut -c1-16)
+stamp=$(cat "$here"/krdp/* | sha256sum | cut -c1-16)   # the manifest and whatever it references
 if flatpak --user info "$APP" >/dev/null 2>&1 && [ "$(cat "$state/installed" 2>/dev/null)" = "$stamp" ]; then
   echo "$APP: installed and up to date with the manifest"
 else
