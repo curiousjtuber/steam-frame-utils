@@ -5,7 +5,9 @@ SAM file, turn NLA on when PAM isn't in use, and keep FreeRDP 3.32's extended se
   a5c6f54 Conditionally re-enable NLA autentication
   7a803ab Fix NLA authentication
   31824f9 Fix authentication with FreeRDP 3.32 (cherry picked from f868133)
-Drop once krdp 6.8.0 is out and the kpipewire it needs is too.
+Drop once the Frame's KWin is 6.7 or later: krdp 6.8 only streams from a KWin that
+speaks version 6 of its screencast protocol, and SteamOS's KWin 6.2.5 speaks 3 (the
+manifest header has the rest). The 6.8 manifest waits on the krdp-6.8 branch.
 
 From 17f2685564cca9d6dc2d8de8f1841ecfd8f4a43b Mon Sep 17 00:00:00 2001
 From: David Edmundson <kde@davidedmundson.co.uk>

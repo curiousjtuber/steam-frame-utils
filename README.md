@@ -362,8 +362,10 @@ what the app gets on the headset.
   no krdp and Flathub only has the client, so `install-krdp.sh` builds it as a flatpak on KDE's
   runtime, with its own FreeRDP and kpipewire, pinned and patched as the manifest in `apps/krdp/`
   explains (krdp 6.7.5 gets 6.8's NLA login, which works with FreeRDP 3.32 clients; kpipewire
-  crashes on the 256 px cursor gamescope sets). The first run installs the KDE 6.11 SDK and
-  flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
+  crashes on the 256 px cursor gamescope sets). krdp 6.8 itself has to wait for a SteamOS with
+  KWin 6.7 or later: it needs a newer screencast protocol than KWin 6.2.5 speaks, so it streams
+  nothing on the Frame; the `krdp-6.8` branch holds that manifest. The first run installs the
+  KDE 6.11 SDK and flatpak-builder (about 1 GB to download) and builds for half an hour; later runs
   rebuild only what changed. KWin lets the sandboxed server capture through the app's desktop
   file, so neither desktop needs KWin's permission checks turned off. Nothing starts it by
   itself. `--bundle` also writes the build as one `.flatpak` file, which another aarch64 device

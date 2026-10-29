@@ -10,12 +10,21 @@
 # use. krdp's own desktop file lists them, so it's renamed to this app id and exported. No
 # permission bypass in KWin is needed, so the stock desktop works as well as Frametop's.
 #
-# Pinned here on purpose (verified 2026-10-10):
+# Pinned here on purpose (verified 2026-10-29):
 # - krdp 6.7.5 with krdp-nla-backport.patch: 6.7.5 has no NLA (TLS only, the password compared
 #   in onPostConnect, which FreeRDP 3.32 clients such as krdc 26.08 leave empty). The patch is
 #   krdp 6.8's three NLA commits, unchanged: logins are checked with NLA against a SAM file of
 #   the users it's given, and FreeRDP 3.32's extended security stays off (KRdp MR 248, FreeRDP
-#   issue 13567). krdp 6.8 itself needs kpipewire 6.8, libei and newer protocols; not yet.
+#   issue 13567).
+#   krdp 6.8 is the last version this app can't move to while SteamOS ships KWin 6.2.5: its
+#   --plasma session asks KWin for version 6 of zkde_screencast_unstable_v1 (the serial event,
+#   first sent by KWin 6.7) and gives up when the compositor offers less (6.2.5 offers 3), and
+#   it sends input over KWin's org.kde.KWin.EIS.RemoteDesktop D-Bus interface instead of the
+#   fake-input protocol, which would need the nested session's bus in the sandbox. Frametop's
+#   desktop and the stock one are both that KWin, nested. The 6.8.2 manifest (libei 1.6.0,
+#   plasma-wayland-protocols 1.23.0, no patches) builds and waits on the krdp-6.8 branch; its
+#   header lists what running it on 6.2.5 would take. Check KWin's s_version in
+#   src/wayland/screencast_v1.cpp against what krdp's screencasting.cpp requests before bumping.
 # - kpipewire with kpipewire-cursor-bitmap-size.patch: it copies the cursor bitmap with
 #   stride * height * 4 bytes (stride is already bytes) and segfaults on the 256 px cursor
 #   SteamOS's gamescope sets. Upstream: https://invent.kde.org/plasma/kpipewire/-/merge_requests/285
