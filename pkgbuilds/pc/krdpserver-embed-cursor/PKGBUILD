@@ -39,7 +39,7 @@
 # upstream moved the code and the patch needs refreshing. The tarball's sha256 is Arch's.
 
 pkgname=krdpserver-embed-cursor
-pkgver=6.8.1
+pkgver=6.8.2
 _dirver=$(echo $pkgver | cut -d. -f1-3)
 pkgrel=1
 pkgdesc="KDE's krdpserver with an EmbedCursor option, the host's pointer painted into the stream, beside krdp"
@@ -51,7 +51,7 @@ makedepends=(extra-cmake-modules
              plasma-wayland-protocols)
 source=(https://download.kde.org/stable/plasma/$_dirver/krdp-$pkgver.tar.xz{,.sig}
         krdp-embed-cursor.patch)
-sha256sums=('32c3351ca396aa15801961a4db62a2b452f35bab8a91fb0c862ce99d4d1d4a23'
+sha256sums=('d4e651aca79f83d6da71de1b36e87d38b123fa8fcf066c2294a55a43b3675de4'
             'SKIP'
             'f590391b4fa5385ac1f79f4cfc51fe5abb36852a818d176c534568f1fd5ea839')
 validpgpkeys=('E0A3EB202F8E57528E13E72FD7574483BB57B18D'  # Jonathan Esk-Riddell <jr@jriddell.org>
